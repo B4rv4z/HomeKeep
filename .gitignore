@@ -28,3 +28,9 @@ Thumbs.db
 
 # Docker
 *.log
+
+# Sensitive financial data files (NEVER commit)
+*.xlsx
+*.xls
+*.pdf
+*.csv
