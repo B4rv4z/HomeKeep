@@ -11,6 +11,7 @@ from backend.parser import parse_expense_text, parse_bulk_transactions
 logger = logging.getLogger(__name__)
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 ALLOWED_USER_IDS = [
     int(uid.strip())
     for uid in os.getenv("ALLOWED_USER_IDS", "").split(",")
@@ -217,12 +218,24 @@ def extract_text_from_xlsx(xlsx_bytes: bytes) -> str:
 
 async def process_bulk_text(update: Update, text: str, sender_name: str):
     """Process bulk transaction text and save to database."""
+    # Check if OpenAI is configured
+    if not OPENAI_API_KEY:
+        await update.message.reply_text(
+            "⚠️ OpenAI API key not configured.\n"
+            "Bulk import requires OpenAI for parsing.\n"
+            "Please add openai_api_key in add-on configuration."
+        )
+        return
+
     transactions = parse_bulk_transactions(text)
 
     if not transactions:
+        # Provide more helpful debugging info
+        text_preview = text[:200].replace('\n', ' ')
         await update.message.reply_text(
-            "No transactions found in the text.\n"
-            "Make sure each line has an amount and description."
+            f"No transactions found in the text.\n\n"
+            f"Text preview: {text_preview}...\n\n"
+            f"Make sure the file contains transaction data with amounts."
         )
         return
 
