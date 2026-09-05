@@ -100,7 +100,7 @@
             <input id="inc-amount" type="number" step="0.01" placeholder="סכום נטו (₪)" required
                    class="w-full bg-slate-900 border border-slate-700 p-2 rounded text-slate-100 focus:border-emerald-500 focus:outline-none" />
             <select id="inc-type" class="w-full bg-slate-900 border border-slate-700 p-2 rounded text-slate-100">
-              <option value="salary">משכורת קבועה</option>
+              <option value="salary">משכורת</option>
               <option value="bonus">בונוס</option>
               <option value="extra">הכנסה נוספת</option>
             </select>
@@ -160,7 +160,7 @@
             <select id="rec-category" class="bg-slate-900 border border-slate-700 p-2 rounded text-slate-100"></select>
             <select id="rec-frequency" class="bg-slate-900 border border-slate-700 p-2 rounded text-slate-100">
               <option value="monthly">חודשי</option>
-              <option value="one_time">חד פעמי</option>
+              <option value="one_time">חד-פעמי</option>
             </select>
             <input id="rec-day" type="number" min="1" max="31" placeholder="יום בחודש" value="1"
                    class="bg-slate-900 border border-slate-700 p-2 rounded text-slate-100 focus:border-amber-500 focus:outline-none" />
@@ -215,6 +215,7 @@
               <th class="text-right p-3 text-slate-400">תיאור</th>
               <th class="text-right p-3 text-slate-400">קטגוריה</th>
               <th class="text-right p-3 text-slate-400">סכום</th>
+              <th class="text-center p-3 text-slate-400">מקור</th>
               <th class="text-center p-3 text-slate-400">פעולות</th>
             </tr>
           </thead>
@@ -270,8 +271,8 @@
           <input id="cat-name" type="text" placeholder="שם הקטגוריה" required
                  class="bg-slate-900 border border-slate-700 p-2 rounded text-slate-100 focus:border-emerald-500 focus:outline-none" />
           <select id="cat-type" class="bg-slate-900 border border-slate-700 p-2 rounded text-slate-100">
-            <option value="variable">משתנה</option>
-            <option value="fixed">קבוע</option>
+            <option value="variable">הוצאה משתנה</option>
+            <option value="fixed">הוצאה קבועה</option>
           </select>
           <input id="cat-budget" type="number" step="0.01" placeholder="תקציב חודשי (₪)" required
                  class="bg-slate-900 border border-slate-700 p-2 rounded text-slate-100 focus:border-emerald-500 focus:outline-none" />

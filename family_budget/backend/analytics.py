@@ -145,6 +145,7 @@ def get_recent_expenses(limit: int = 10) -> List[Dict[str, Any]]:
                 "category": cat.name if cat else "Unknown",
                 "payer": exp.payer,
                 "created_at": exp.created_at.isoformat(),
-                "is_fixed": exp.is_fixed
+                "is_fixed": exp.is_fixed,
+                "source": exp.source
             })
         return result

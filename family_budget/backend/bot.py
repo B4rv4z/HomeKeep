@@ -249,7 +249,8 @@ async def process_bulk_text(update: Update, text: str, sender_name: str):
                 description=tx["description"],
                 category_id=tx["category_id"],
                 payer=sender_name,
-                is_fixed=False
+                is_fixed=False,
+                source="file"
             )
             session.add(expense)
             saved_count += 1
@@ -310,7 +311,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             description=description,
             category_id=cat_id,
             payer=sender_name,
-            is_fixed=False
+            is_fixed=False,
+            source="manual"
         )
         session.add(expense)
         session.commit()

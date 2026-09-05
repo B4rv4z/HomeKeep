@@ -28,6 +28,7 @@ class ExpenseCreate(BaseModel):
     category_id: int
     payer: Optional[str] = "Dashboard"
     is_fixed: bool = False
+    source: str = "manual"  # 'manual' or 'file'
 
 
 class IncomeCreate(BaseModel):
@@ -107,7 +108,8 @@ async def create_expense(expense: ExpenseCreate, db: Session = Depends(get_sessi
         description=expense.description,
         category_id=expense.category_id,
         payer=expense.payer,
-        is_fixed=expense.is_fixed
+        is_fixed=expense.is_fixed,
+        source=expense.source
     )
     db.add(new_expense)
     db.commit()
@@ -422,7 +424,8 @@ async def get_expenses_by_month(
             "category": cat.name if cat else "Unknown",
             "payer": exp.payer,
             "created_at": exp.created_at.isoformat(),
-            "is_fixed": exp.is_fixed
+            "is_fixed": exp.is_fixed,
+            "source": exp.source
         })
 
     return result

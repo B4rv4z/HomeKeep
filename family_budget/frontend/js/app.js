@@ -168,6 +168,7 @@ async function fetchRecentExpenses() {
     }
     expenses.forEach((exp) => {
       const date = new Date(exp.created_at).toLocaleDateString("he-IL");
+      const sourceLabel = exp.source === 'file' ? 'קובץ' : 'ידני';
       const item = document.createElement("div");
       item.className = "flex justify-between items-center py-2 border-b border-slate-700/50 group";
       item.innerHTML = `
@@ -181,6 +182,7 @@ async function fetchRecentExpenses() {
         <div class="flex items-center gap-3">
           <span class="text-rose-400 font-medium">₪${exp.amount.toLocaleString()}</span>
           <span class="text-slate-500 text-xs">${date}</span>
+          <span class="text-xs px-1.5 py-0.5 rounded ${exp.source === 'file' ? 'bg-sky-900/50 text-sky-400' : 'bg-slate-700 text-slate-400'}">${sourceLabel}</span>
           <button class="delete-btn text-slate-500 hover:text-rose-400 opacity-0 group-hover:opacity-100" data-expense-id="${exp.id}">✕</button>
         </div>
       `;
@@ -466,11 +468,12 @@ function renderExpensesTable(expenses) {
   const tbody = document.getElementById("expenses-table-body");
   tbody.innerHTML = "";
   if (expenses.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="5" class="text-center p-4 text-slate-500">לא נמצאו הוצאות</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="text-center p-4 text-slate-500">לא נמצאו הוצאות</td></tr>';
     return;
   }
   expenses.forEach(exp => {
     const date = new Date(exp.created_at).toLocaleDateString("he-IL");
+    const sourceLabel = exp.source === 'file' ? 'קובץ' : 'ידני';
     const tr = document.createElement("tr");
     tr.className = "hover:bg-slate-800/50";
     tr.innerHTML = `
@@ -485,6 +488,9 @@ function renderExpensesTable(expenses) {
       </td>
       <td class="p-3">
         <input type="number" value="${exp.amount}" step="0.01" class="expense-amount-input bg-transparent border-b border-transparent hover:border-slate-600 focus:border-emerald-500 focus:outline-none w-20 text-rose-400 font-medium" data-expense-id="${exp.id}" />
+      </td>
+      <td class="p-3 text-center">
+        <span class="text-xs px-1.5 py-0.5 rounded ${exp.source === 'file' ? 'bg-sky-900/50 text-sky-400' : 'bg-slate-700 text-slate-400'}">${sourceLabel}</span>
       </td>
       <td class="p-3 text-center">
         <button class="expense-delete-btn text-slate-500 hover:text-rose-400" data-expense-id="${exp.id}">🗑️</button>
@@ -673,8 +679,8 @@ function renderCategoriesList() {
       <div class="flex-1 grid grid-cols-1 md:grid-cols-4 gap-3 items-center">
         <input type="text" value="${cat.name}" class="cat-name-input bg-transparent border-b border-transparent hover:border-slate-600 focus:border-emerald-500 focus:outline-none text-slate-200" data-cat-id="${cat.id}" />
         <select class="cat-type-select bg-slate-800 border border-slate-600 text-slate-300 text-xs rounded px-2 py-1" data-cat-id="${cat.id}">
-          <option value="variable" ${cat.type === 'variable' ? 'selected' : ''}>משתנה</option>
-          <option value="fixed" ${cat.type === 'fixed' ? 'selected' : ''}>קבוע</option>
+          <option value="variable" ${cat.type === 'variable' ? 'selected' : ''}>הוצאה משתנה</option>
+          <option value="fixed" ${cat.type === 'fixed' ? 'selected' : ''}>הוצאה קבועה</option>
         </select>
         <div class="flex items-center gap-1">
           <span class="text-slate-500 text-xs">תקציב:</span>

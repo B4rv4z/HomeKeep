@@ -40,6 +40,7 @@ class Expense(SQLModel, table=True):
     payer: Optional[str] = Field(default="Unknown")
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
     is_fixed: bool = Field(default=False)
+    source: str = Field(default="manual")  # 'manual' or 'file'
 
 
 class Income(SQLModel, table=True):
@@ -88,10 +89,11 @@ def init_db():
         # Seed default categories if empty
         if not session.exec(select(Category)).first():
             categories = [
-                Category(name="מזון וסופר", type="variable", monthly_budget=4500.0),
-                Category(name="תחבורה ודלק", type="variable", monthly_budget=1200.0),
+                Category(name="מזון וצרכנות", type="variable", monthly_budget=4500.0),
+                Category(name="הוצאות רכב", type="variable", monthly_budget=1200.0),
                 Category(name="מסעדות ואוכל בחוץ", type="variable", monthly_budget=1500.0),
                 Category(name="ילדים וחינוך", type="variable", monthly_budget=1500.0),
+                Category(name="פנאי ובילוי", type="variable", monthly_budget=1000.0),
                 Category(name="דיור וחשבונות", type="fixed", monthly_budget=6000.0),
                 Category(name="ביטוח ובריאות", type="fixed", monthly_budget=1200.0),
                 Category(name="קניות אינטרנט", type="variable", monthly_budget=1500.0),
@@ -104,27 +106,27 @@ def init_db():
             # Seed default keyword mappings
             cat_map = {c.name: c.id for c in session.exec(select(Category)).all()}
             mappings = [
-                # Groceries / מזון וסופר
-                KeywordMapping(keyword="supermarket", category_id=cat_map["מזון וסופר"]),
-                KeywordMapping(keyword="groceries", category_id=cat_map["מזון וסופר"]),
-                KeywordMapping(keyword="shufersal", category_id=cat_map["מזון וסופר"]),
-                KeywordMapping(keyword="rami levy", category_id=cat_map["מזון וסופר"]),
-                KeywordMapping(keyword="mega", category_id=cat_map["מזון וסופר"]),
-                KeywordMapping(keyword="שופרסל", category_id=cat_map["מזון וסופר"]),
-                KeywordMapping(keyword="רמי לוי", category_id=cat_map["מזון וסופר"]),
-                KeywordMapping(keyword="ירקות", category_id=cat_map["מזון וסופר"]),
-                KeywordMapping(keyword="בשר", category_id=cat_map["מזון וסופר"]),
-                KeywordMapping(keyword="אטליז", category_id=cat_map["מזון וסופר"]),
-                # Transportation / תחבורה ודלק
-                KeywordMapping(keyword="fuel", category_id=cat_map["תחבורה ודלק"]),
-                KeywordMapping(keyword="gas", category_id=cat_map["תחבורה ודלק"]),
-                KeywordMapping(keyword="charging", category_id=cat_map["תחבורה ודלק"]),
-                KeywordMapping(keyword="parking", category_id=cat_map["תחבורה ודלק"]),
-                KeywordMapping(keyword="sonol", category_id=cat_map["תחבורה ודלק"]),
-                KeywordMapping(keyword="paz", category_id=cat_map["תחבורה ודלק"]),
-                KeywordMapping(keyword="דלק", category_id=cat_map["תחבורה ודלק"]),
-                KeywordMapping(keyword="חניה", category_id=cat_map["תחבורה ודלק"]),
-                KeywordMapping(keyword="טעינה", category_id=cat_map["תחבורה ודלק"]),
+                # Groceries / מזון וצרכנות
+                KeywordMapping(keyword="supermarket", category_id=cat_map["מזון וצרכנות"]),
+                KeywordMapping(keyword="groceries", category_id=cat_map["מזון וצרכנות"]),
+                KeywordMapping(keyword="shufersal", category_id=cat_map["מזון וצרכנות"]),
+                KeywordMapping(keyword="rami levy", category_id=cat_map["מזון וצרכנות"]),
+                KeywordMapping(keyword="mega", category_id=cat_map["מזון וצרכנות"]),
+                KeywordMapping(keyword="שופרסל", category_id=cat_map["מזון וצרכנות"]),
+                KeywordMapping(keyword="רמי לוי", category_id=cat_map["מזון וצרכנות"]),
+                KeywordMapping(keyword="ירקות", category_id=cat_map["מזון וצרכנות"]),
+                KeywordMapping(keyword="בשר", category_id=cat_map["מזון וצרכנות"]),
+                KeywordMapping(keyword="אטליז", category_id=cat_map["מזון וצרכנות"]),
+                # Car expenses / הוצאות רכב
+                KeywordMapping(keyword="fuel", category_id=cat_map["הוצאות רכב"]),
+                KeywordMapping(keyword="gas", category_id=cat_map["הוצאות רכב"]),
+                KeywordMapping(keyword="charging", category_id=cat_map["הוצאות רכב"]),
+                KeywordMapping(keyword="parking", category_id=cat_map["הוצאות רכב"]),
+                KeywordMapping(keyword="sonol", category_id=cat_map["הוצאות רכב"]),
+                KeywordMapping(keyword="paz", category_id=cat_map["הוצאות רכב"]),
+                KeywordMapping(keyword="דלק", category_id=cat_map["הוצאות רכב"]),
+                KeywordMapping(keyword="חניה", category_id=cat_map["הוצאות רכב"]),
+                KeywordMapping(keyword="טעינה", category_id=cat_map["הוצאות רכב"]),
                 # Restaurants / מסעדות ואוכל בחוץ
                 KeywordMapping(keyword="coffee", category_id=cat_map["מסעדות ואוכל בחוץ"]),
                 KeywordMapping(keyword="restaurant", category_id=cat_map["מסעדות ואוכל בחוץ"]),
@@ -134,6 +136,22 @@ def init_db():
                 KeywordMapping(keyword="קפה", category_id=cat_map["מסעדות ואוכל בחוץ"]),
                 KeywordMapping(keyword="מסעדה", category_id=cat_map["מסעדות ואוכל בחוץ"]),
                 KeywordMapping(keyword="פיצה", category_id=cat_map["מסעדות ואוכל בחוץ"]),
+                # Leisure & Entertainment / פנאי ובילוי
+                KeywordMapping(keyword="cinema", category_id=cat_map["פנאי ובילוי"]),
+                KeywordMapping(keyword="movie", category_id=cat_map["פנאי ובילוי"]),
+                KeywordMapping(keyword="theater", category_id=cat_map["פנאי ובילוי"]),
+                KeywordMapping(keyword="concert", category_id=cat_map["פנאי ובילוי"]),
+                KeywordMapping(keyword="museum", category_id=cat_map["פנאי ובילוי"]),
+                KeywordMapping(keyword="gym", category_id=cat_map["פנאי ובילוי"]),
+                KeywordMapping(keyword="spa", category_id=cat_map["פנאי ובילוי"]),
+                KeywordMapping(keyword="קולנוע", category_id=cat_map["פנאי ובילוי"]),
+                KeywordMapping(keyword="סרט", category_id=cat_map["פנאי ובילוי"]),
+                KeywordMapping(keyword="תיאטרון", category_id=cat_map["פנאי ובילוי"]),
+                KeywordMapping(keyword="הופעה", category_id=cat_map["פנאי ובילוי"]),
+                KeywordMapping(keyword="מוזיאון", category_id=cat_map["פנאי ובילוי"]),
+                KeywordMapping(keyword="חדר כושר", category_id=cat_map["פנאי ובילוי"]),
+                KeywordMapping(keyword="ספא", category_id=cat_map["פנאי ובילוי"]),
+                KeywordMapping(keyword="בילוי", category_id=cat_map["פנאי ובילוי"]),
                 # E-commerce & Shopping / קניות אינטרנט
                 KeywordMapping(keyword="amazon", category_id=cat_map["קניות אינטרנט"]),
                 KeywordMapping(keyword="aliexpress", category_id=cat_map["קניות אינטרנט"]),
