@@ -451,6 +451,26 @@ async function loadExpensesByMonth() {
   }
 }
 
+async function clearMonthExpenses() {
+  const select = document.getElementById("expense-month-select");
+  const monthLabel = select.options[select.selectedIndex].text;
+  const [year, month] = selectedExpenseMonth.split('-').map(Number);
+
+  if (!confirm(`האם אתה בטוח שברצונך למחוק את כל ההוצאות של ${monthLabel}?\n\nפעולה זו בלתי הפיכה!`)) {
+    return;
+  }
+
+  try {
+    const result = await apiDelete(`/api/expenses/bulk/by-month?year=${year}&month=${month}`);
+    alert(`נמחקו ${result.count} הוצאות`);
+    await loadExpensesByMonth();
+    await refreshDashboard();
+  } catch (error) {
+    console.error("Failed to clear month expenses:", error);
+    alert("שגיאה במחיקת הוצאות");
+  }
+}
+
 function filterExpenses() {
   const categoryFilter = document.getElementById("expense-category-filter").value;
   const searchText = document.getElementById("expense-search").value.toLowerCase();

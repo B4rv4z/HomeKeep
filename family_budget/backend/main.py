@@ -139,6 +139,25 @@ async def delete_expenses_by_source(source: str, db: Session = Depends(get_sessi
     return {"status": "deleted", "source": source, "count": count}
 
 
+@app.delete("/api/expenses/bulk/by-month")
+async def delete_expenses_by_month(
+    year: int = Query(...),
+    month: int = Query(...),
+    db: Session = Depends(get_session)
+):
+    """Delete all expenses for a specific month."""
+    all_expenses = db.exec(select(Expense)).all()
+    month_expenses = [
+        exp for exp in all_expenses
+        if exp.created_at.year == year and exp.created_at.month == month
+    ]
+    count = len(month_expenses)
+    for expense in month_expenses:
+        db.delete(expense)
+    db.commit()
+    return {"status": "deleted", "year": year, "month": month, "count": count}
+
+
 class ExpenseUpdate(BaseModel):
     category_id: Optional[int] = None
     description: Optional[str] = None
