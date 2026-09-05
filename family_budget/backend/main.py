@@ -287,6 +287,26 @@ async def update_category(
     return existing
 
 
+@app.delete("/api/categories/{category_id}")
+async def delete_category(category_id: int, db: Session = Depends(get_session)):
+    """Delete a category (only if no expenses use it)."""
+    category = db.get(Category, category_id)
+    if not category:
+        return {"error": "Category not found"}
+
+    # Check if any expenses use this category
+    expenses_count = len(db.exec(
+        select(Expense).where(Expense.category_id == category_id)
+    ).all())
+
+    if expenses_count > 0:
+        return {"error": f"Cannot delete: {expenses_count} expenses use this category"}
+
+    db.delete(category)
+    db.commit()
+    return {"status": "deleted", "id": category_id}
+
+
 # ============ Analytics Endpoints ============
 
 @app.get("/api/analytics/monthly")
@@ -308,6 +328,104 @@ async def get_monthly_analytics(
 async def get_recent_expenses_api(limit: int = Query(default=10, le=50)):
     """Get recent expenses with category names."""
     return get_recent_expenses(limit)
+
+
+@app.get("/api/analytics/comparison")
+async def get_monthly_comparison(
+    months: int = Query(default=6, le=12),
+    db: Session = Depends(get_session)
+):
+    """
+    Get monthly comparison data for the last N months.
+    Returns spending by category for each month.
+    """
+    from datetime import datetime
+    from dateutil.relativedelta import relativedelta
+
+    now = datetime.now()
+    result = []
+
+    for i in range(months - 1, -1, -1):
+        target_date = now - relativedelta(months=i)
+        year, month = target_date.year, target_date.month
+
+        # Get expenses for this month
+        all_expenses = db.exec(select(Expense)).all()
+        month_expenses = [
+            exp for exp in all_expenses
+            if exp.created_at.year == year and exp.created_at.month == month
+        ]
+
+        # Get recurring expenses
+        all_recurring = db.exec(
+            select(RecurringExpense).where(RecurringExpense.is_active == True)
+        ).all()
+
+        # Calculate by category
+        categories_data = db.exec(select(Category)).all()
+        category_totals = {}
+
+        for cat in categories_data:
+            cat_expenses = [exp for exp in month_expenses if exp.category_id == cat.id]
+            spent = sum(exp.amount for exp in cat_expenses)
+            # Add recurring for this category
+            cat_recurring = [r for r in all_recurring if r.category_id == cat.id and r.frequency == "monthly"]
+            spent += sum(r.amount for r in cat_recurring)
+            category_totals[cat.name] = spent
+
+        total_spent = sum(category_totals.values())
+
+        # Get income for this month
+        all_incomes = db.exec(select(Income)).all()
+        month_income = sum(
+            inc.amount for inc in all_incomes
+            if inc.received_date.year == year and inc.received_date.month == month
+        )
+
+        result.append({
+            "year": year,
+            "month": month,
+            "period": f"{year}-{month:02d}",
+            "period_label": target_date.strftime("%b %Y"),
+            "total_spent": total_spent,
+            "total_income": month_income,
+            "categories": category_totals
+        })
+
+    return result
+
+
+@app.get("/api/expenses/by-month")
+async def get_expenses_by_month(
+    year: int = Query(...),
+    month: int = Query(...),
+    db: Session = Depends(get_session)
+):
+    """Get all expenses for a specific month with category names."""
+    all_expenses = db.exec(
+        select(Expense).order_by(Expense.created_at.desc())
+    ).all()
+
+    month_expenses = [
+        exp for exp in all_expenses
+        if exp.created_at.year == year and exp.created_at.month == month
+    ]
+
+    result = []
+    for exp in month_expenses:
+        cat = db.get(Category, exp.category_id)
+        result.append({
+            "id": exp.id,
+            "amount": exp.amount,
+            "description": exp.description,
+            "category_id": exp.category_id,
+            "category": cat.name if cat else "Unknown",
+            "payer": exp.payer,
+            "created_at": exp.created_at.isoformat(),
+            "is_fixed": exp.is_fixed
+        })
+
+    return result
 
 
 # ============ Members Endpoint ============
