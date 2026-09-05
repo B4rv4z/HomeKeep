@@ -61,6 +61,20 @@ class Investment(SQLModel, table=True):
     notes: Optional[str] = None
 
 
+class RecurringExpense(SQLModel, table=True):
+    """Recurring expenses like mortgage, insurance, subscriptions."""
+    __tablename__ = "recurring_expenses"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(index=True)
+    amount: float
+    category_id: int = Field(foreign_key="categories.id", index=True)
+    frequency: str = Field(default="monthly")  # 'monthly' or 'one_time'
+    day_of_month: int = Field(default=1)  # Day when payment is due
+    is_active: bool = Field(default=True)
+    notes: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 def init_db():
     """Initialize database tables and seed default data."""
     SQLModel.metadata.create_all(engine)

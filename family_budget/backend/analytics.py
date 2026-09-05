@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Dict, Any, List
 from sqlmodel import Session, select
-from backend.database import engine, Expense, Income, Investment, Category
+from backend.database import engine, Expense, Income, Investment, Category, RecurringExpense
 
 
 def calculate_monthly_analytics(year: int, month: int) -> Dict[str, Any]:
@@ -43,6 +43,15 @@ def calculate_monthly_analytics(year: int, month: int) -> Dict[str, Any]:
         ]
         total_spent = sum(exp.amount for exp in month_expenses)
 
+        # 3b. Add recurring expenses (monthly ones always, one_time check if applicable)
+        all_recurring = session.exec(
+            select(RecurringExpense).where(RecurringExpense.is_active == True)
+        ).all()
+        total_recurring = sum(
+            r.amount for r in all_recurring if r.frequency == "monthly"
+        )
+        total_spent += total_recurring
+
         # 4. Breakdown by category
         categories = session.exec(select(Category)).all()
         category_breakdown: List[Dict[str, Any]] = []
@@ -51,6 +60,9 @@ def calculate_monthly_analytics(year: int, month: int) -> Dict[str, Any]:
         for cat in categories:
             cat_expenses = [exp for exp in month_expenses if exp.category_id == cat.id]
             spent = sum(exp.amount for exp in cat_expenses)
+            # Add recurring expenses for this category
+            cat_recurring = [r for r in all_recurring if r.category_id == cat.id and r.frequency == "monthly"]
+            spent += sum(r.amount for r in cat_recurring)
             budget = cat.monthly_budget or 0.0
             diff = budget - spent
             pct_used = (spent / budget * 100) if budget > 0 else 0.0

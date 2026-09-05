@@ -369,6 +369,155 @@ function setupFormHandlers() {
 
 async function refreshDashboard() {
   await fetchDashboard();
+  await fetchRecurringExpenses();
+}
+
+// ============ Recurring Expenses ============
+
+function toggleRecurringForm() {
+  const form = document.getElementById("recurring-form");
+  form.classList.toggle("hidden");
+}
+
+async function fetchRecurringExpenses() {
+  try {
+    const recurring = await apiGet("/api/recurring");
+    const container = document.getElementById("recurring-list");
+    container.innerHTML = "";
+
+    if (recurring.length === 0) {
+      container.innerHTML = '<div class="text-slate-500 text-center py-2">אין הוצאות קבועות</div>';
+      return;
+    }
+
+    // Calculate total monthly recurring
+    const totalMonthly = recurring
+      .filter(r => r.is_active && r.frequency === "monthly")
+      .reduce((sum, r) => sum + r.amount, 0);
+
+    // Add summary
+    const summary = document.createElement("div");
+    summary.className = "mb-3 p-2 bg-slate-900/50 rounded text-amber-400 font-medium";
+    summary.innerHTML = `סה"כ הוצאות קבועות חודשיות: ₪${totalMonthly.toLocaleString()}`;
+    container.appendChild(summary);
+
+    recurring.forEach((rec) => {
+      const item = document.createElement("div");
+      item.className = `flex justify-between items-center py-2 border-b border-slate-700/50 group ${!rec.is_active ? 'opacity-50' : ''}`;
+      item.innerHTML = `
+        <div class="flex-1 flex items-center gap-2">
+          <span class="text-slate-200 font-medium">${rec.name}</span>
+          <span class="text-slate-500">•</span>
+          <span class="text-slate-400">${rec.category}</span>
+          <span class="text-xs px-2 py-0.5 rounded ${rec.frequency === 'monthly' ? 'bg-amber-900/50 text-amber-400' : 'bg-slate-700 text-slate-400'}">
+            ${rec.frequency === 'monthly' ? 'חודשי' : 'חד פעמי'}
+          </span>
+        </div>
+        <div class="flex items-center gap-3">
+          <span class="text-amber-400 font-medium">₪${rec.amount.toLocaleString()}</span>
+          <span class="text-slate-500 text-xs">יום ${rec.day_of_month}</span>
+          <button
+            class="toggle-recurring-btn text-slate-500 hover:text-amber-400 opacity-0 group-hover:opacity-100 transition-opacity"
+            data-recurring-id="${rec.id}"
+            data-is-active="${rec.is_active}"
+            title="${rec.is_active ? 'השהה' : 'הפעל'}"
+          >
+            ${rec.is_active ? '⏸' : '▶'}
+          </button>
+          <button
+            class="delete-recurring-btn text-slate-500 hover:text-rose-400 opacity-0 group-hover:opacity-100 transition-opacity"
+            data-recurring-id="${rec.id}"
+            title="מחק"
+          >
+            ✕
+          </button>
+        </div>
+      `;
+      container.appendChild(item);
+    });
+
+    // Add event listeners
+    container.querySelectorAll('.toggle-recurring-btn').forEach(btn => {
+      btn.addEventListener('click', handleToggleRecurring);
+    });
+    container.querySelectorAll('.delete-recurring-btn').forEach(btn => {
+      btn.addEventListener('click', handleDeleteRecurring);
+    });
+
+  } catch (error) {
+    console.error("Recurring expenses fetch error:", error);
+  }
+}
+
+async function handleToggleRecurring(e) {
+  const btn = e.target;
+  const recurringId = btn.dataset.recurringId;
+  const isActive = btn.dataset.isActive === 'true';
+
+  try {
+    await apiPatch(`/api/recurring/${recurringId}`, { is_active: !isActive });
+    await refreshDashboard();
+  } catch (error) {
+    console.error("Failed to toggle recurring:", error);
+    alert("שגיאה בעדכון הוצאה קבועה");
+  }
+}
+
+async function handleDeleteRecurring(e) {
+  const btn = e.target;
+  const recurringId = btn.dataset.recurringId;
+
+  if (!confirm("למחוק את ההוצאה הקבועה?")) return;
+
+  try {
+    await apiDelete(`/api/recurring/${recurringId}`);
+    await refreshDashboard();
+  } catch (error) {
+    console.error("Failed to delete recurring:", error);
+    alert("שגיאה במחיקת הוצאה קבועה");
+  }
+}
+
+function setupRecurringForm() {
+  // Populate recurring category select
+  const recCategorySelect = document.getElementById("rec-category");
+  if (recCategorySelect) {
+    recCategorySelect.innerHTML = "";
+    categories.forEach((cat) => {
+      const option = document.createElement("option");
+      option.value = cat.id;
+      option.textContent = cat.name;
+      recCategorySelect.appendChild(option);
+    });
+  }
+
+  // Recurring form handler
+  document.getElementById("recurring-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const form = e.target;
+    form.classList.add("loading");
+
+    try {
+      const payload = {
+        name: document.getElementById("rec-name").value,
+        amount: parseFloat(document.getElementById("rec-amount").value),
+        category_id: parseInt(document.getElementById("rec-category").value),
+        frequency: document.getElementById("rec-frequency").value,
+        day_of_month: parseInt(document.getElementById("rec-day").value) || 1,
+        notes: document.getElementById("rec-notes").value || null
+      };
+
+      await apiPost("/api/recurring", payload);
+      form.reset();
+      form.classList.add("hidden");
+      await refreshDashboard();
+    } catch (error) {
+      console.error("Recurring submit error:", error);
+      alert("שגיאה בהוספת הוצאה קבועה");
+    } finally {
+      form.classList.remove("loading");
+    }
+  });
 }
 
 // ============ Initialize ============
@@ -376,8 +525,10 @@ async function refreshDashboard() {
 document.addEventListener("DOMContentLoaded", async () => {
   await loadCategories();
   await fetchDashboard();
+  await fetchRecurringExpenses();
   setupFormHandlers();
+  setupRecurringForm();
 
   // Auto-refresh every 30 seconds
-  setInterval(fetchDashboard, 30000);
+  setInterval(refreshDashboard, 30000);
 });

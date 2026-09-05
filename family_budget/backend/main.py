@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from backend.database import init_db, get_session, Expense, Income, Investment, Category, Member
+from backend.database import init_db, get_session, Expense, Income, Investment, Category, Member, RecurringExpense
 from backend.bot import run_bot_in_thread
 from backend.analytics import calculate_monthly_analytics, get_recent_expenses
 
@@ -317,3 +317,108 @@ async def get_members(db: Session = Depends(get_session)):
     """Get all family members."""
     members = db.exec(select(Member)).all()
     return members
+
+
+# ============ Recurring Expenses Endpoints ============
+
+class RecurringExpenseCreate(BaseModel):
+    name: str
+    amount: float
+    category_id: int
+    frequency: str = "monthly"  # 'monthly' or 'one_time'
+    day_of_month: int = 1
+    notes: Optional[str] = None
+
+
+class RecurringExpenseUpdate(BaseModel):
+    name: Optional[str] = None
+    amount: Optional[float] = None
+    category_id: Optional[int] = None
+    frequency: Optional[str] = None
+    day_of_month: Optional[int] = None
+    is_active: Optional[bool] = None
+    notes: Optional[str] = None
+
+
+@app.get("/api/recurring")
+async def get_recurring_expenses(db: Session = Depends(get_session)):
+    """Get all recurring expenses with category names."""
+    recurring = db.exec(select(RecurringExpense).order_by(RecurringExpense.name)).all()
+    result = []
+    for r in recurring:
+        cat = db.get(Category, r.category_id)
+        result.append({
+            "id": r.id,
+            "name": r.name,
+            "amount": r.amount,
+            "category_id": r.category_id,
+            "category": cat.name if cat else "Unknown",
+            "frequency": r.frequency,
+            "day_of_month": r.day_of_month,
+            "is_active": r.is_active,
+            "notes": r.notes
+        })
+    return result
+
+
+@app.post("/api/recurring")
+async def create_recurring_expense(
+    expense: RecurringExpenseCreate,
+    db: Session = Depends(get_session)
+):
+    """Create a new recurring expense."""
+    new_recurring = RecurringExpense(
+        name=expense.name,
+        amount=expense.amount,
+        category_id=expense.category_id,
+        frequency=expense.frequency,
+        day_of_month=expense.day_of_month,
+        notes=expense.notes
+    )
+    db.add(new_recurring)
+    db.commit()
+    db.refresh(new_recurring)
+    return new_recurring
+
+
+@app.patch("/api/recurring/{recurring_id}")
+async def update_recurring_expense(
+    recurring_id: int,
+    updates: RecurringExpenseUpdate,
+    db: Session = Depends(get_session)
+):
+    """Update a recurring expense."""
+    recurring = db.get(RecurringExpense, recurring_id)
+    if not recurring:
+        return {"error": "Recurring expense not found"}
+
+    if updates.name is not None:
+        recurring.name = updates.name
+    if updates.amount is not None:
+        recurring.amount = updates.amount
+    if updates.category_id is not None:
+        recurring.category_id = updates.category_id
+    if updates.frequency is not None:
+        recurring.frequency = updates.frequency
+    if updates.day_of_month is not None:
+        recurring.day_of_month = updates.day_of_month
+    if updates.is_active is not None:
+        recurring.is_active = updates.is_active
+    if updates.notes is not None:
+        recurring.notes = updates.notes
+
+    db.add(recurring)
+    db.commit()
+    db.refresh(recurring)
+    return recurring
+
+
+@app.delete("/api/recurring/{recurring_id}")
+async def delete_recurring_expense(recurring_id: int, db: Session = Depends(get_session)):
+    """Delete a recurring expense."""
+    recurring = db.get(RecurringExpense, recurring_id)
+    if not recurring:
+        return {"error": "Recurring expense not found"}
+    db.delete(recurring)
+    db.commit()
+    return {"status": "deleted", "id": recurring_id}
