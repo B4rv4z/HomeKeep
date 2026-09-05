@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  budget-app:
+    build: .
+    container_name: family_budget
+    ports:
+      - "8000:8000"
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - ALLOWED_USER_IDS=${ALLOWED_USER_IDS}
+      - DATA_PATH=/data
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    volumes:
+      - ./data:/data
+    restart: unless-stopped

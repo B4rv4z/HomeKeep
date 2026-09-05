@@ -1,0 +1,22 @@
+name: "Family Budget Tracker"
+slug: "family_budget"
+description: "Zero-leakage local family finance manager with Telegram bot and SQLite"
+version: "1.0.0"
+startup: "application"
+boot: "auto"
+arch:
+  - aarch64
+  - amd64
+  - armv7
+ports:
+  8000/tcp: 8000
+ports_description:
+  8000/tcp: "Web Dashboard Interface"
+map:
+  - data:rw
+options:
+  telegram_bot_token: ""
+  allowed_user_ids: ""
+schema:
+  telegram_bot_token: "str"
+  allowed_user_ids: "str?"

@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Family Budget Tracker</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    .loading { opacity: 0.5; pointer-events: none; }
+  </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen">
+  <div class="max-w-5xl mx-auto px-4 py-6">
+    <!-- Header -->
+    <header class="flex justify-between items-center pb-6 border-b border-slate-800">
+      <div>
+        <h1 class="text-2xl font-bold tracking-tight text-emerald-400">ניהול תקציב משפחתי</h1>
+        <p class="text-xs text-slate-400">Local-First • Home Assistant Add-on</p>
+      </div>
+      <div class="flex items-center gap-3">
+        <button onclick="refreshDashboard()" class="text-xs bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded-lg transition">
+          רענן
+        </button>
+        <div id="current-period" class="text-sm font-semibold bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-700"></div>
+      </div>
+    </header>
+
+    <!-- Metrics Strip -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 my-6">
+      <div class="bg-slate-800/80 p-4 rounded-xl border border-slate-700">
+        <div class="text-xs text-slate-400">סך הכנסות</div>
+        <div id="stat-income" class="text-xl font-bold text-emerald-400 mt-1">₪0</div>
+      </div>
+      <div class="bg-slate-800/80 p-4 rounded-xl border border-slate-700">
+        <div class="text-xs text-slate-400">הוצאות החודש</div>
+        <div id="stat-spent" class="text-xl font-bold text-rose-400 mt-1">₪0</div>
+      </div>
+      <div class="bg-slate-800/80 p-4 rounded-xl border border-slate-700">
+        <div class="text-xs text-slate-400">הפקדות להשקעה</div>
+        <div id="stat-invested" class="text-xl font-bold text-sky-400 mt-1">₪0</div>
+      </div>
+      <div class="bg-slate-800/80 p-4 rounded-xl border border-slate-700">
+        <div class="text-xs text-slate-400">שיעור חיסכון והשקעה</div>
+        <div id="stat-savings-rate" class="text-xl font-bold text-amber-400 mt-1">0%</div>
+      </div>
+    </div>
+
+    <!-- Monthly Insights / Alerts Card -->
+    <div id="insights-card" class="mb-6 p-4 rounded-xl bg-slate-800/50 border border-slate-700 hidden">
+      <h3 class="text-sm font-bold text-slate-200 mb-2">תובנות והתרעות חודשיות</h3>
+      <ul id="insights-list" class="text-xs space-y-1.5 text-slate-300"></ul>
+    </div>
+
+    <!-- Charts & Tables Layout -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <!-- Chart Column -->
+      <div class="bg-slate-800/60 p-5 rounded-xl border border-slate-700 flex flex-col items-center justify-center">
+        <h3 class="text-sm font-semibold mb-4 text-slate-300 w-full text-right">התפלגות הוצאות</h3>
+        <div class="w-full max-w-[220px] aspect-square">
+          <canvas id="categoryChart"></canvas>
+        </div>
+      </div>
+
+      <!-- Category Budget Progress -->
+      <div class="md:col-span-2 bg-slate-800/60 p-5 rounded-xl border border-slate-700">
+        <h3 class="text-sm font-semibold mb-3 text-slate-300">סטטוס תקציב לפי קטגוריה</h3>
+        <div id="category-progress-list" class="space-y-3.5 text-xs"></div>
+      </div>
+    </div>
+
+    <!-- Recent Expenses -->
+    <div class="mt-6 bg-slate-800/40 p-4 rounded-xl border border-slate-700">
+      <h3 class="text-sm font-bold text-slate-300 mb-3">הוצאות אחרונות</h3>
+      <div id="recent-expenses" class="space-y-2 text-xs max-h-48 overflow-y-auto"></div>
+    </div>
+
+    <!-- Quick Macro Entry Forms -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+      <!-- Add Income Form -->
+      <div class="bg-slate-800/40 p-4 rounded-xl border border-slate-700">
+        <h3 class="text-xs font-bold text-slate-300 mb-3">הזנת הכנסה (שכר / בונוס)</h3>
+        <form id="income-form" class="space-y-2.5 text-xs">
+          <input id="inc-amount" type="number" step="0.01" placeholder="סכום נטו (₪)" required
+                 class="w-full bg-slate-900 border border-slate-700 p-2 rounded text-slate-100 focus:border-emerald-500 focus:outline-none" />
+          <select id="inc-type" class="w-full bg-slate-900 border border-slate-700 p-2 rounded text-slate-100">
+            <option value="salary">משכורת קבועה</option>
+            <option value="bonus">בונוס</option>
+            <option value="extra">הכנסה נוספת</option>
+          </select>
+          <input id="inc-notes" type="text" placeholder="הערה (אופציונלי)"
+                 class="w-full bg-slate-900 border border-slate-700 p-2 rounded text-slate-100 focus:border-emerald-500 focus:outline-none" />
+          <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-500 font-semibold p-2 rounded text-white transition">
+            הוסף הכנסה
+          </button>
+        </form>
+      </div>
+
+      <!-- Add Investment Form -->
+      <div class="bg-slate-800/40 p-4 rounded-xl border border-slate-700">
+        <h3 class="text-xs font-bold text-slate-300 mb-3">הזנת הפקדה להשקעה / חיסכון</h3>
+        <form id="investment-form" class="space-y-2.5 text-xs">
+          <input id="inv-amount" type="number" step="0.01" placeholder="סכום הפקדה (₪)" required
+                 class="w-full bg-slate-900 border border-slate-700 p-2 rounded text-slate-100 focus:border-sky-500 focus:outline-none" />
+          <input id="inv-target" type="text" placeholder="אפיק השקעה (למשל: תיק מסחר, השתלמות, גמל)" required
+                 class="w-full bg-slate-900 border border-slate-700 p-2 rounded text-slate-100 focus:border-sky-500 focus:outline-none" />
+          <button type="submit" class="w-full bg-sky-600 hover:bg-sky-500 font-semibold p-2 rounded text-white transition">
+            הוסף הפקדה
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Add Expense Form (Dashboard) -->
+    <div class="mt-6 bg-slate-800/40 p-4 rounded-xl border border-slate-700">
+      <h3 class="text-xs font-bold text-slate-300 mb-3">הזנת הוצאה ידנית</h3>
+      <form id="expense-form" class="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
+        <input id="exp-amount" type="number" step="0.01" placeholder="סכום (₪)" required
+               class="bg-slate-900 border border-slate-700 p-2 rounded text-slate-100 focus:border-rose-500 focus:outline-none" />
+        <input id="exp-desc" type="text" placeholder="תיאור" required
+               class="bg-slate-900 border border-slate-700 p-2 rounded text-slate-100 focus:border-rose-500 focus:outline-none" />
+        <select id="exp-category" class="bg-slate-900 border border-slate-700 p-2 rounded text-slate-100">
+          <!-- Populated by JS -->
+        </select>
+        <button type="submit" class="bg-rose-600 hover:bg-rose-500 font-semibold p-2 rounded text-white transition">
+          הוסף הוצאה
+        </button>
+      </form>
+    </div>
+
+    <!-- Footer -->
+    <footer class="mt-8 pt-4 border-t border-slate-800 text-center text-xs text-slate-500">
+      Family Budget Tracker v1.0 • Local-First • Zero Cloud Leakage
+    </footer>
+  </div>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>
