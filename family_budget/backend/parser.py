@@ -1,11 +1,63 @@
 import os
 import re
+import json
 import logging
 from typing import Tuple, Optional, List
 from sqlmodel import Session, select
 from backend.database import engine, KeywordMapping, Category
 
 logger = logging.getLogger(__name__)
+
+
+def repair_json(text: str) -> Optional[dict]:
+    """
+    Attempt to repair and parse potentially malformed JSON.
+    Returns parsed dict or None if repair fails.
+    """
+    # First try direct parsing
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Try to extract JSON object from text (in case there's extra content)
+    json_match = re.search(r'\{[\s\S]*\}', text)
+    if json_match:
+        try:
+            return json.loads(json_match.group())
+        except json.JSONDecodeError:
+            pass
+
+    # Try to fix common issues
+    cleaned = text
+
+    # Remove any BOM or special characters at start
+    cleaned = cleaned.lstrip('\ufeff\u200b\u200c\u200d')
+
+    # Try to find and extract just the transactions array
+    tx_match = re.search(r'"transactions"\s*:\s*\[([\s\S]*?)\]', cleaned)
+    if tx_match:
+        try:
+            # Reconstruct minimal JSON
+            return json.loads('{"transactions": [' + tx_match.group(1) + ']}')
+        except json.JSONDecodeError:
+            pass
+
+    # Last resort: try to extract individual transaction objects
+    tx_objects = re.findall(r'\{[^{}]*"amount"[^{}]*\}', cleaned)
+    if tx_objects:
+        transactions = []
+        for tx_str in tx_objects:
+            try:
+                tx = json.loads(tx_str)
+                if "amount" in tx:
+                    transactions.append(tx)
+            except json.JSONDecodeError:
+                continue
+        if transactions:
+            return {"transactions": transactions}
+
+    return None
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
@@ -160,6 +212,27 @@ def extract_amount_only(text: str) -> Optional[float]:
     return float(match.group(1)) if match else None
 
 
+def clean_pdf_text(text: str) -> str:
+    """
+    Clean PDF extracted text to make it easier for LLM to parse.
+    Removes noise and normalizes formatting.
+    """
+    # Remove common PDF artifacts
+    text = re.sub(r'\x00', '', text)  # Null bytes
+    text = re.sub(r'[\x01-\x08\x0b\x0c\x0e-\x1f]', '', text)  # Control chars
+
+    # Normalize whitespace but keep newlines for structure
+    text = re.sub(r'[ \t]+', ' ', text)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+
+    # Remove very long lines that are likely garbage (e.g., base64 encoded images)
+    lines = text.split('\n')
+    cleaned_lines = [line for line in lines if len(line) < 500]
+    text = '\n'.join(cleaned_lines)
+
+    return text.strip()
+
+
 def parse_bulk_transactions(text: str) -> tuple[List[dict], str]:
     """
     Parse bulk credit card transactions using OpenAI.
@@ -179,7 +252,15 @@ def parse_bulk_transactions(text: str) -> tuple[List[dict], str]:
     categories_str = ", ".join(categories)
 
     try:
-        import json
+        # Clean the PDF text first
+        text = clean_pdf_text(text)
+        logger.info(f"Cleaned text length: {len(text)} chars")
+
+        # Truncate text if too long (OpenAI has token limits)
+        max_chars = 10000
+        if len(text) > max_chars:
+            text = text[:max_chars]
+            logger.info(f"Truncated text to {max_chars} characters")
 
         response = client.chat.completions.create(
             model="gpt-4o-mini",
@@ -187,30 +268,36 @@ def parse_bulk_transactions(text: str) -> tuple[List[dict], str]:
                 {
                     "role": "system",
                     "content": (
-                        f"You are a credit card statement parser. Extract all transactions from the text.\n"
-                        f"For each transaction, extract:\n"
-                        f"1. amount (numeric, positive value)\n"
-                        f"2. description (merchant/business name)\n"
-                        f"3. category (classify into one of: {categories_str})\n\n"
-                        f"Return a JSON object with a 'transactions' array containing objects with keys: amount, description, category\n"
-                        f"If you cannot find any transactions, return: {{\"transactions\": []}}"
+                        f"You are an Israeli credit card statement parser. Extract ALL financial transactions from the Hebrew text.\n\n"
+                        f"RULES:\n"
+                        f"1. Find transaction lines with amounts (numbers like 123.45 or 123)\n"
+                        f"2. Extract the merchant/business name as description\n"
+                        f"3. amount must be a positive number (no currency symbols)\n"
+                        f"4. Classify each into one of: {categories_str}\n"
+                        f"5. If unsure about category, use 'כללי ושונות'\n\n"
+                        f"Return valid JSON: {{\"transactions\": [{{\"amount\": 123.45, \"description\": \"Store\", \"category\": \"קטגוריה\"}}]}}"
                     )
                 },
                 {
                     "role": "user",
-                    "content": text
+                    "content": f"Extract transactions:\n\n{text}"
                 }
             ],
-            max_tokens=8000,
+            max_tokens=4000,
             temperature=0,
-            response_format={"type": "json_object"}  # Force valid JSON output
+            response_format={"type": "json_object"}
         )
 
         result_text = response.choices[0].message.content.strip()
-        logger.info(f"LLM bulk parse response: {result_text[:200]}...")
+        logger.info(f"LLM bulk parse response length: {len(result_text)} chars")
+        logger.info(f"LLM response preview: {result_text[:300]}...")
 
-        # Parse JSON response
-        result = json.loads(result_text)
+        # Use repair_json for robust parsing
+        result = repair_json(result_text)
+        if result is None:
+            logger.error(f"Failed to parse/repair JSON. Raw response: {result_text[:500]}")
+            return [], f"JSON parse error - could not repair response"
+
         transactions = result.get("transactions", [])
 
         if not isinstance(transactions, list):
