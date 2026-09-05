@@ -94,6 +94,8 @@ def init_db():
                 Category(name="ילדים וחינוך", type="variable", monthly_budget=1500.0),
                 Category(name="דיור וחשבונות", type="fixed", monthly_budget=6000.0),
                 Category(name="ביטוח ובריאות", type="fixed", monthly_budget=1200.0),
+                Category(name="קניות אינטרנט", type="variable", monthly_budget=1500.0),
+                Category(name="מנויים ושירותים", type="fixed", monthly_budget=500.0),
                 Category(name="כללי ושונות", type="variable", monthly_budget=1000.0),
             ]
             session.add_all(categories)
@@ -132,6 +134,33 @@ def init_db():
                 KeywordMapping(keyword="קפה", category_id=cat_map["מסעדות ואוכל בחוץ"]),
                 KeywordMapping(keyword="מסעדה", category_id=cat_map["מסעדות ואוכל בחוץ"]),
                 KeywordMapping(keyword="פיצה", category_id=cat_map["מסעדות ואוכל בחוץ"]),
+                # E-commerce & Shopping / קניות אינטרנט
+                KeywordMapping(keyword="amazon", category_id=cat_map["קניות אינטרנט"]),
+                KeywordMapping(keyword="aliexpress", category_id=cat_map["קניות אינטרנט"]),
+                KeywordMapping(keyword="shein", category_id=cat_map["קניות אינטרנט"]),
+                KeywordMapping(keyword="asos", category_id=cat_map["קניות אינטרנט"]),
+                KeywordMapping(keyword="zara", category_id=cat_map["קניות אינטרנט"]),
+                KeywordMapping(keyword="h&m", category_id=cat_map["קניות אינטרנט"]),
+                KeywordMapping(keyword="terminalx", category_id=cat_map["קניות אינטרנט"]),
+                KeywordMapping(keyword="ksp", category_id=cat_map["קניות אינטרנט"]),
+                KeywordMapping(keyword="ivory", category_id=cat_map["קניות אינטרנט"]),
+                KeywordMapping(keyword="בגדים", category_id=cat_map["קניות אינטרנט"]),
+                KeywordMapping(keyword="הנעלה", category_id=cat_map["קניות אינטרנט"]),
+                KeywordMapping(keyword="נעליים", category_id=cat_map["קניות אינטרנט"]),
+                # Subscriptions / מנויים ושירותים
+                KeywordMapping(keyword="netflix", category_id=cat_map["מנויים ושירותים"]),
+                KeywordMapping(keyword="spotify", category_id=cat_map["מנויים ושירותים"]),
+                KeywordMapping(keyword="apple", category_id=cat_map["מנויים ושירותים"]),
+                KeywordMapping(keyword="google", category_id=cat_map["מנויים ושירותים"]),
+                KeywordMapping(keyword="disney", category_id=cat_map["מנויים ושירותים"]),
+                KeywordMapping(keyword="hbo", category_id=cat_map["מנויים ושירותים"]),
+                KeywordMapping(keyword="yes", category_id=cat_map["מנויים ושירותים"]),
+                KeywordMapping(keyword="hot", category_id=cat_map["מנויים ושירותים"]),
+                KeywordMapping(keyword="cellcom", category_id=cat_map["מנויים ושירותים"]),
+                KeywordMapping(keyword="partner", category_id=cat_map["מנויים ושירותים"]),
+                KeywordMapping(keyword="pelephone", category_id=cat_map["מנויים ושירותים"]),
+                KeywordMapping(keyword="מנוי", category_id=cat_map["מנויים ושירותים"]),
+                KeywordMapping(keyword="סלולר", category_id=cat_map["מנויים ושירותים"]),
             ]
             session.add_all(mappings)
             session.commit()
