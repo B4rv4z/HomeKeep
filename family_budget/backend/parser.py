@@ -160,7 +160,7 @@ def extract_amount_only(text: str) -> Optional[float]:
     return float(match.group(1)) if match else None
 
 
-def parse_bulk_transactions(text: str) -> List[dict]:
+def parse_bulk_transactions(text: str) -> tuple[List[dict], str]:
     """
     Parse bulk credit card transactions using OpenAI.
 
@@ -168,12 +168,12 @@ def parse_bulk_transactions(text: str) -> List[dict]:
         text: Raw text from CC statement (could be copy-pasted, PDF text, etc.)
 
     Returns:
-        List of dicts with keys: amount, description, category_id, category_name
+        Tuple of (transactions list, error message or empty string)
     """
     client = get_openai_client()
     if not client:
         logger.warning("OpenAI not configured, cannot parse bulk transactions")
-        return []
+        return [], "OpenAI not configured"
 
     categories = get_category_names()
     categories_str = ", ".join(categories)
@@ -254,11 +254,11 @@ def parse_bulk_transactions(text: str) -> List[dict]:
                 })
 
         logger.info(f"Parsed {len(parsed)} transactions from bulk text")
-        return parsed
+        return parsed, ""
 
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse LLM JSON response: {e}")
-        return []
+        return [], f"JSON parse error: {e}"
     except Exception as e:
         logger.error(f"Bulk transaction parsing failed: {e}")
-        return []
+        return [], f"OpenAI error: {e}"

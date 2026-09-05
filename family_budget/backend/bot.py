@@ -227,13 +227,14 @@ async def process_bulk_text(update: Update, text: str, sender_name: str):
         )
         return
 
-    transactions = parse_bulk_transactions(text)
+    transactions, error = parse_bulk_transactions(text)
 
     if not transactions:
         # Provide more helpful debugging info
         text_preview = text[:200].replace('\n', ' ')
+        error_msg = f"\n\nError: {error}" if error else ""
         await update.message.reply_text(
-            f"No transactions found in the text.\n\n"
+            f"No transactions found in the text.{error_msg}\n\n"
             f"Text preview: {text_preview}...\n\n"
             f"Make sure the file contains transaction data with amounts."
         )
