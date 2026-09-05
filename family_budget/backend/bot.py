@@ -2,13 +2,18 @@ import os
 import logging
 import asyncio
 import threading
-from telegram import Update
-from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, CommandHandler, filters
+import uuid
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, CommandHandler, CallbackQueryHandler, filters
 from sqlmodel import Session
 from backend.database import engine, Expense
 from backend.parser import parse_expense_text, parse_bulk_transactions
 
 logger = logging.getLogger(__name__)
+
+# In-memory storage for pending bulk imports (keyed by unique ID)
+# Format: {import_id: {"transactions": [...], "sender_name": str, "chat_id": int}}
+pending_imports = {}
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
@@ -382,8 +387,53 @@ def extract_text_from_xlsx(xlsx_bytes: bytes) -> str:
         return ""
 
 
+def save_transactions_to_db(transactions: list, sender_name: str) -> int:
+    """Save transactions to database and return count."""
+    saved_count = 0
+    with Session(engine) as session:
+        for tx in transactions:
+            expense = Expense(
+                amount=tx["amount"],
+                description=tx["description"],
+                category_id=tx["category_id"],
+                payer=sender_name,
+                is_fixed=False,
+                source="file"
+            )
+            session.add(expense)
+            saved_count += 1
+        session.commit()
+    return saved_count
+
+
+def build_import_summary(transactions: list, expected_total: float = 0.0) -> tuple[str, str, float]:
+    """Build summary text for bulk import. Returns (category_summary, validation_msg, diff_pct)."""
+    total = sum(tx["amount"] for tx in transactions)
+    categories = {}
+    for tx in transactions:
+        cat = tx["category_name"]
+        categories[cat] = categories.get(cat, 0) + tx["amount"]
+
+    category_summary = "\n".join([f"• {cat}: ₪{amt:,.2f}" for cat, amt in categories.items()])
+
+    validation_msg = ""
+    diff_pct = 0.0
+    if expected_total > 0:
+        diff = abs(total - expected_total)
+        diff_pct = (diff / expected_total) * 100 if expected_total > 0 else 0
+
+        if diff_pct <= 1:
+            validation_msg = f"\n\n✅ *Validation: MATCH*\nFile total: ₪{expected_total:,.2f}"
+        elif diff_pct <= 5:
+            validation_msg = f"\n\n⚠️ *Validation: Close*\nFile total: ₪{expected_total:,.2f}\nDifference: ₪{diff:,.2f} ({diff_pct:.1f}%)"
+        else:
+            validation_msg = f"\n\n❌ *Validation: MISMATCH*\nFile total: ₪{expected_total:,.2f}\nParsed total: ₪{total:,.2f}\nDifference: ₪{diff:,.2f} ({diff_pct:.1f}%)"
+
+    return category_summary, validation_msg, diff_pct
+
+
 async def process_bulk_text(update: Update, text: str, sender_name: str, expected_total: float = 0.0):
-    """Process bulk transaction text and save to database."""
+    """Process bulk transaction text. On mismatch, ask for user confirmation before saving."""
     # Check if OpenAI is configured
     if not OPENAI_API_KEY:
         await update.message.reply_text(
@@ -406,43 +456,43 @@ async def process_bulk_text(update: Update, text: str, sender_name: str, expecte
         )
         return
 
-    # Save all transactions
-    saved_count = 0
-    with Session(engine) as session:
-        for tx in transactions:
-            expense = Expense(
-                amount=tx["amount"],
-                description=tx["description"],
-                category_id=tx["category_id"],
-                payer=sender_name,
-                is_fixed=False,
-                source="file"
-            )
-            session.add(expense)
-            saved_count += 1
-        session.commit()
-
-    # Build summary
     total = sum(tx["amount"] for tx in transactions)
-    categories = {}
-    for tx in transactions:
-        cat = tx["category_name"]
-        categories[cat] = categories.get(cat, 0) + tx["amount"]
+    category_summary, validation_msg, diff_pct = build_import_summary(transactions, expected_total)
 
-    category_summary = "\n".join([f"• {cat}: ₪{amt:,.2f}" for cat, amt in categories.items()])
+    # If mismatch (>5%), ask for confirmation before saving
+    if expected_total > 0 and diff_pct > 5:
+        # Store pending import
+        import_id = str(uuid.uuid4())[:8]
+        pending_imports[import_id] = {
+            "transactions": transactions,
+            "sender_name": sender_name,
+            "chat_id": update.effective_chat.id,
+            "expected_total": expected_total
+        }
 
-    # Build validation message
-    validation_msg = ""
-    if expected_total > 0:
-        diff = abs(total - expected_total)
-        diff_pct = (diff / expected_total) * 100 if expected_total > 0 else 0
+        # Build preview message with inline keyboard
+        preview_reply = (
+            f"*Bulk Import Preview*\n\n"
+            f"Transactions: {len(transactions)}\n"
+            f"Parsed Total: ₪{total:,.2f}\n\n"
+            f"*By Category:*\n{category_summary}"
+            f"{validation_msg}\n\n"
+            f"⚠️ *There is a significant mismatch!*\n"
+            f"Do you want to save these transactions anyway?"
+        )
 
-        if diff_pct <= 1:
-            validation_msg = f"\n\n✅ *Validation: MATCH*\nFile total: ₪{expected_total:,.2f}"
-        elif diff_pct <= 5:
-            validation_msg = f"\n\n⚠️ *Validation: Close*\nFile total: ₪{expected_total:,.2f}\nDifference: ₪{diff:,.2f} ({diff_pct:.1f}%)"
-        else:
-            validation_msg = f"\n\n❌ *Validation: MISMATCH*\nFile total: ₪{expected_total:,.2f}\nParsed total: ₪{total:,.2f}\nDifference: ₪{diff:,.2f} ({diff_pct:.1f}%)"
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("✅ אשר ושמור", callback_data=f"import_approve_{import_id}"),
+                InlineKeyboardButton("❌ בטל", callback_data=f"import_decline_{import_id}")
+            ]
+        ])
+
+        await update.message.reply_text(preview_reply, parse_mode="Markdown", reply_markup=keyboard)
+        return
+
+    # No mismatch or mismatch <= 5% - save directly
+    saved_count = save_transactions_to_db(transactions, sender_name)
 
     reply = (
         f"*Bulk Import Complete*\n\n"
@@ -452,6 +502,60 @@ async def process_bulk_text(update: Update, text: str, sender_name: str, expecte
         f"{validation_msg}"
     )
     await update.message.reply_text(reply, parse_mode="Markdown")
+
+
+async def handle_import_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle approve/decline callbacks for bulk imports."""
+    query = update.callback_query
+    await query.answer()
+
+    data = query.data
+    if not data.startswith("import_"):
+        return
+
+    parts = data.split("_")
+    if len(parts) != 3:
+        return
+
+    action = parts[1]  # "approve" or "decline"
+    import_id = parts[2]
+
+    # Check if import exists
+    if import_id not in pending_imports:
+        await query.edit_message_text(
+            "❌ Import expired or already processed.\n"
+            "Please upload the file again.",
+            parse_mode="Markdown"
+        )
+        return
+
+    pending = pending_imports.pop(import_id)
+    transactions = pending["transactions"]
+    sender_name = pending["sender_name"]
+    expected_total = pending["expected_total"]
+
+    if action == "decline":
+        await query.edit_message_text(
+            "❌ *Import Cancelled*\n\n"
+            f"Discarded {len(transactions)} transactions.\n"
+            "No data was saved.",
+            parse_mode="Markdown"
+        )
+        return
+
+    # action == "approve"
+    saved_count = save_transactions_to_db(transactions, sender_name)
+    total = sum(tx["amount"] for tx in transactions)
+    category_summary, validation_msg, _ = build_import_summary(transactions, expected_total)
+
+    reply = (
+        f"✅ *Bulk Import Approved & Saved*\n\n"
+        f"Transactions: {saved_count}\n"
+        f"Total: ₪{total:,.2f}\n\n"
+        f"*By Category:*\n{category_summary}"
+        f"{validation_msg}"
+    )
+    await query.edit_message_text(reply, parse_mode="Markdown")
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -519,6 +623,7 @@ async def run_bot_async():
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("bulk", bulk_command))
+    application.add_handler(CallbackQueryHandler(handle_import_callback, pattern="^import_"))
     application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
