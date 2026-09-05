@@ -128,6 +128,17 @@ async def delete_expense(expense_id: int, db: Session = Depends(get_session)):
     return {"status": "deleted", "id": expense_id}
 
 
+@app.delete("/api/expenses/bulk/by-source/{source}")
+async def delete_expenses_by_source(source: str, db: Session = Depends(get_session)):
+    """Delete all expenses with a specific source (e.g., 'file' or 'manual')."""
+    expenses = db.exec(select(Expense).where(Expense.source == source)).all()
+    count = len(expenses)
+    for expense in expenses:
+        db.delete(expense)
+    db.commit()
+    return {"status": "deleted", "source": source, "count": count}
+
+
 class ExpenseUpdate(BaseModel):
     category_id: Optional[int] = None
     description: Optional[str] = None

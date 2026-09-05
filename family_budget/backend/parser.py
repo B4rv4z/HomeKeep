@@ -215,7 +215,7 @@ def extract_amount_only(text: str) -> Optional[float]:
 def clean_pdf_text(text: str) -> str:
     """
     Clean PDF extracted text to make it easier for LLM to parse.
-    Removes noise and normalizes formatting.
+    Removes noise, normalizes formatting, and rejoins fragmented Hebrew text.
     """
     # Remove common PDF artifacts
     text = re.sub(r'\x00', '', text)  # Null bytes
@@ -227,9 +227,49 @@ def clean_pdf_text(text: str) -> str:
 
     # Remove very long lines that are likely garbage (e.g., base64 encoded images)
     lines = text.split('\n')
-    cleaned_lines = [line for line in lines if len(line) < 500]
-    text = '\n'.join(cleaned_lines)
+    cleaned_lines = [line.strip() for line in lines if len(line) < 500]
 
+    # Rejoin fragmented Hebrew text lines
+    # Israeli CC PDFs often split text like "חברת החשמל לישראל" across multiple lines
+    # Join consecutive short lines that look like fragments
+    rejoined_lines = []
+    buffer = []
+
+    for line in cleaned_lines:
+        # Skip empty lines - they mark section boundaries
+        if not line:
+            if buffer:
+                rejoined_lines.append(' '.join(buffer))
+                buffer = []
+            rejoined_lines.append('')
+            continue
+
+        # Check if line looks like a fragment (short, no numbers, Hebrew text)
+        is_fragment = (
+            len(line) < 15 and
+            not re.search(r'\d', line) and
+            re.search(r'[\u0590-\u05FF]', line)  # Contains Hebrew
+        )
+
+        # Check if line has a transaction amount (likely complete or end of transaction)
+        has_amount = bool(re.search(r'\d+[.,]\d{2}', line))
+
+        if is_fragment and not has_amount:
+            buffer.append(line)
+        else:
+            if buffer:
+                # Join buffer with current line
+                buffer.append(line)
+                rejoined_lines.append(' '.join(buffer))
+                buffer = []
+            else:
+                rejoined_lines.append(line)
+
+    # Don't forget any remaining buffer
+    if buffer:
+        rejoined_lines.append(' '.join(buffer))
+
+    text = '\n'.join(rejoined_lines)
     return text.strip()
 
 
@@ -269,18 +309,21 @@ def parse_bulk_transactions(text: str) -> tuple[List[dict], str]:
                     "role": "system",
                     "content": (
                         f"You are an Israeli credit card statement parser. Extract ALL financial transactions from the Hebrew text.\n\n"
+                        f"IMPORTANT: Hebrew PDF text may be fragmented across lines due to RTL formatting. "
+                        f"Merchant names like 'חברת החשמל לישראל' may appear split. Reconstruct full names.\n\n"
                         f"RULES:\n"
-                        f"1. Find transaction lines with amounts (numbers like 123.45 or 123)\n"
-                        f"2. Extract the merchant/business name as description\n"
+                        f"1. Find ALL transaction lines with amounts (numbers like 123.45 or 123)\n"
+                        f"2. Extract the full merchant/business name as description (rejoin fragmented text)\n"
                         f"3. amount must be a positive number (no currency symbols)\n"
                         f"4. Classify each into one of: {categories_str}\n"
-                        f"5. If unsure about category, use 'כללי ושונות'\n\n"
+                        f"5. If unsure about category, use 'כללי ושונות'\n"
+                        f"6. DO NOT skip any transactions - extract every single one with an amount\n\n"
                         f"Return valid JSON: {{\"transactions\": [{{\"amount\": 123.45, \"description\": \"Store\", \"category\": \"קטגוריה\"}}]}}"
                     )
                 },
                 {
                     "role": "user",
-                    "content": f"Extract transactions:\n\n{text}"
+                    "content": f"Extract ALL transactions from this Israeli credit card statement:\n\n{text}"
                 }
             ],
             max_tokens=4000,

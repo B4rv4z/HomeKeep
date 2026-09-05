@@ -89,16 +89,17 @@ def init_db():
         # Seed default categories if empty
         if not session.exec(select(Category)).first():
             categories = [
-                Category(name="מזון וצרכנות", type="variable", monthly_budget=4500.0),
-                Category(name="הוצאות רכב", type="variable", monthly_budget=1200.0),
-                Category(name="מסעדות ואוכל בחוץ", type="variable", monthly_budget=1500.0),
-                Category(name="ילדים וחינוך", type="variable", monthly_budget=1500.0),
-                Category(name="פנאי ובילוי", type="variable", monthly_budget=1000.0),
-                Category(name="דיור וחשבונות", type="fixed", monthly_budget=6000.0),
-                Category(name="ביטוח ובריאות", type="fixed", monthly_budget=1200.0),
-                Category(name="קניות אינטרנט", type="variable", monthly_budget=1500.0),
+                Category(name="מזון וצרכנות", type="variable", monthly_budget=4000.0),
+                Category(name="הוצאות רכב", type="variable", monthly_budget=2000.0),
+                Category(name="מסעדות ואוכל בחוץ", type="variable", monthly_budget=500.0),
+                Category(name="ילדים וחינוך", type="variable", monthly_budget=4000.0),
+                Category(name="פנאי ובילוי", type="variable", monthly_budget=700.0),
+                Category(name="דיור וחשבונות", type="fixed", monthly_budget=8500.0),
+                Category(name="ביטוח ובריאות", type="fixed", monthly_budget=2000.0),
+                Category(name="קניות אינטרנט", type="variable", monthly_budget=1000.0),
                 Category(name="מנויים ושירותים", type="fixed", monthly_budget=500.0),
                 Category(name="כללי ושונות", type="variable", monthly_budget=1000.0),
+                Category(name="טיפוח ויופי", type="variable", monthly_budget=800.0),
             ]
             session.add_all(categories)
             session.commit()
@@ -179,6 +180,25 @@ def init_db():
                 KeywordMapping(keyword="pelephone", category_id=cat_map["מנויים ושירותים"]),
                 KeywordMapping(keyword="מנוי", category_id=cat_map["מנויים ושירותים"]),
                 KeywordMapping(keyword="סלולר", category_id=cat_map["מנויים ושירותים"]),
+                # Beauty & Grooming / טיפוח ויופי
+                KeywordMapping(keyword="haircut", category_id=cat_map["טיפוח ויופי"]),
+                KeywordMapping(keyword="salon", category_id=cat_map["טיפוח ויופי"]),
+                KeywordMapping(keyword="barber", category_id=cat_map["טיפוח ויופי"]),
+                KeywordMapping(keyword="manicure", category_id=cat_map["טיפוח ויופי"]),
+                KeywordMapping(keyword="pedicure", category_id=cat_map["טיפוח ויופי"]),
+                KeywordMapping(keyword="cosmetics", category_id=cat_map["טיפוח ויופי"]),
+                KeywordMapping(keyword="makeup", category_id=cat_map["טיפוח ויופי"]),
+                KeywordMapping(keyword="skincare", category_id=cat_map["טיפוח ויופי"]),
+                KeywordMapping(keyword="תספורת", category_id=cat_map["טיפוח ויופי"]),
+                KeywordMapping(keyword="מספרה", category_id=cat_map["טיפוח ויופי"]),
+                KeywordMapping(keyword="מניקור", category_id=cat_map["טיפוח ויופי"]),
+                KeywordMapping(keyword="פדיקור", category_id=cat_map["טיפוח ויופי"]),
+                KeywordMapping(keyword="איפור", category_id=cat_map["טיפוח ויופי"]),
+                KeywordMapping(keyword="קוסמטיקה", category_id=cat_map["טיפוח ויופי"]),
+                KeywordMapping(keyword="טיפוח", category_id=cat_map["טיפוח ויופי"]),
+                KeywordMapping(keyword="יופי", category_id=cat_map["טיפוח ויופי"]),
+                KeywordMapping(keyword="שיער", category_id=cat_map["טיפוח ויופי"]),
+                KeywordMapping(keyword="ציפורניים", category_id=cat_map["טיפוח ויופי"]),
             ]
             session.add_all(mappings)
             session.commit()
