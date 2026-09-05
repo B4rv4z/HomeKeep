@@ -6,7 +6,7 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, CommandHandler, filters
 from sqlmodel import Session
 from backend.database import engine, Expense
-from backend.parser import parse_expense_text
+from backend.parser import parse_expense_text, parse_bulk_transactions
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +67,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• `coffee 18` → Restaurants & Dining\n"
         "• `shufersal 250` → Groceries & Supermarket\n"
         "• `parking 30` → Transportation & Fuel\n\n"
+        "*Bulk Import:*\n"
+        "• `/bulk` followed by multiple lines\n"
+        "• Or upload a file (PDF, TXT, CSV)\n\n"
         "*Supported Keywords:*\n"
         "Groceries: supermarket, groceries, shufersal, rami levy, mega\n"
         "Transport: fuel, gas, charging, parking, sonol, paz\n"
@@ -75,6 +78,156 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "View dashboard at: http://localhost:8000"
     )
     await update.message.reply_text(help_text, parse_mode="Markdown")
+
+
+async def bulk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /bulk command - parse multi-line transactions."""
+    if not update.message:
+        return
+
+    user = update.effective_user
+    chat_id = update.effective_chat.id
+
+    if not is_authorized(user.id, chat_id):
+        return
+
+    # Get text after the /bulk command
+    raw_text = update.message.text
+    if " " in raw_text:
+        bulk_text = raw_text.split(" ", 1)[1]
+    else:
+        await update.message.reply_text(
+            "*Bulk Import*\n\n"
+            "Paste your CC transactions after the command:\n"
+            "`/bulk\n"
+            "Shufersal 150.00\n"
+            "Wolt 89.50\n"
+            "Paz Gas 220.00`\n\n"
+            "Or upload a file (PDF, TXT, CSV) with your statement.",
+            parse_mode="Markdown"
+        )
+        return
+
+    await process_bulk_text(update, bulk_text, user.first_name or "Family Member")
+
+
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle document uploads (PDF, TXT, CSV) for bulk transaction import."""
+    if not update.message or not update.message.document:
+        return
+
+    user = update.effective_user
+    chat_id = update.effective_chat.id
+
+    if not is_authorized(user.id, chat_id):
+        logger.warning(f"Unauthorized document from user ID: {user.id}")
+        return
+
+    document = update.message.document
+    file_name = document.file_name or "unknown"
+    file_size = document.file_size or 0
+
+    # Limit file size (1MB max)
+    if file_size > 1024 * 1024:
+        await update.message.reply_text("File too large. Maximum size is 1MB.")
+        return
+
+    # Check file type
+    allowed_extensions = [".txt", ".csv", ".pdf"]
+    file_ext = "." + file_name.split(".")[-1].lower() if "." in file_name else ""
+
+    if file_ext not in allowed_extensions:
+        await update.message.reply_text(
+            f"Unsupported file type: {file_ext}\n"
+            f"Supported formats: TXT, CSV, PDF"
+        )
+        return
+
+    await update.message.reply_text(f"Processing {file_name}...")
+
+    try:
+        # Download file
+        file = await document.get_file()
+        file_bytes = await file.download_as_bytearray()
+
+        # Extract text based on file type
+        if file_ext == ".pdf":
+            text = extract_text_from_pdf(file_bytes)
+        else:
+            # TXT or CSV - decode as text
+            text = file_bytes.decode("utf-8", errors="ignore")
+
+        if not text.strip():
+            await update.message.reply_text("Could not extract text from the file.")
+            return
+
+        await process_bulk_text(update, text, user.first_name or "Family Member")
+
+    except Exception as e:
+        logger.error(f"Document processing error: {e}")
+        await update.message.reply_text(f"Error processing file: {str(e)}")
+
+
+def extract_text_from_pdf(pdf_bytes: bytes) -> str:
+    """Extract text from PDF bytes. Falls back to empty if PyMuPDF not installed."""
+    try:
+        import fitz  # PyMuPDF
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        text = ""
+        for page in doc:
+            text += page.get_text()
+        doc.close()
+        return text
+    except ImportError:
+        logger.warning("PyMuPDF not installed - PDF parsing unavailable")
+        return ""
+    except Exception as e:
+        logger.error(f"PDF extraction error: {e}")
+        return ""
+
+
+async def process_bulk_text(update: Update, text: str, sender_name: str):
+    """Process bulk transaction text and save to database."""
+    transactions = parse_bulk_transactions(text)
+
+    if not transactions:
+        await update.message.reply_text(
+            "No transactions found in the text.\n"
+            "Make sure each line has an amount and description."
+        )
+        return
+
+    # Save all transactions
+    saved_count = 0
+    with Session(engine) as session:
+        for tx in transactions:
+            expense = Expense(
+                amount=tx["amount"],
+                description=tx["description"],
+                category_id=tx["category_id"],
+                payer=sender_name,
+                is_fixed=False
+            )
+            session.add(expense)
+            saved_count += 1
+        session.commit()
+
+    # Build summary
+    total = sum(tx["amount"] for tx in transactions)
+    categories = {}
+    for tx in transactions:
+        cat = tx["category_name"]
+        categories[cat] = categories.get(cat, 0) + tx["amount"]
+
+    category_summary = "\n".join([f"• {cat}: ₪{amt:,.2f}" for cat, amt in categories.items()])
+
+    reply = (
+        f"*Bulk Import Complete*\n\n"
+        f"Transactions: {saved_count}\n"
+        f"Total: ₪{total:,.2f}\n\n"
+        f"*By Category:*\n{category_summary}"
+    )
+    await update.message.reply_text(reply, parse_mode="Markdown")
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -140,6 +293,8 @@ async def run_bot_async():
     # Add handlers
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("bulk", bulk_command))
+    application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     logger.info("Telegram Bot starting long polling...")

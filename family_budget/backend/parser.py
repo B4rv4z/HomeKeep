@@ -158,3 +158,107 @@ def extract_amount_only(text: str) -> Optional[float]:
     """
     match = re.search(r"(\d+(?:\.\d+)?)", text)
     return float(match.group(1)) if match else None
+
+
+def parse_bulk_transactions(text: str) -> List[dict]:
+    """
+    Parse bulk credit card transactions using OpenAI.
+
+    Args:
+        text: Raw text from CC statement (could be copy-pasted, PDF text, etc.)
+
+    Returns:
+        List of dicts with keys: amount, description, category_id, category_name
+    """
+    client = get_openai_client()
+    if not client:
+        logger.warning("OpenAI not configured, cannot parse bulk transactions")
+        return []
+
+    categories = get_category_names()
+    categories_str = ", ".join(categories)
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        f"You are a credit card statement parser. Extract all transactions from the text.\n"
+                        f"For each transaction, extract:\n"
+                        f"1. amount (numeric, positive value)\n"
+                        f"2. description (merchant/business name)\n"
+                        f"3. category (classify into one of: {categories_str})\n\n"
+                        f"Return ONLY a JSON array with objects having keys: amount, description, category\n"
+                        f"Example: [{{'amount': 150.50, 'description': 'Shufersal', 'category': 'Groceries & Supermarket'}}]\n"
+                        f"If you cannot find any transactions, return an empty array: []\n"
+                        f"Do NOT include any explanation, just the JSON array."
+                    )
+                },
+                {
+                    "role": "user",
+                    "content": text
+                }
+            ],
+            max_tokens=4000,
+            temperature=0
+        )
+
+        result_text = response.choices[0].message.content.strip()
+        logger.info(f"LLM bulk parse response: {result_text[:200]}...")
+
+        # Parse JSON response
+        import json
+        # Handle markdown code blocks if present
+        if result_text.startswith("```"):
+            result_text = re.sub(r"```json?\s*", "", result_text)
+            result_text = re.sub(r"```\s*$", "", result_text)
+
+        transactions = json.loads(result_text)
+
+        if not isinstance(transactions, list):
+            logger.warning("LLM did not return a list")
+            return []
+
+        # Map category names to IDs
+        parsed = []
+        with Session(engine) as session:
+            cat_map = {c.name: c.id for c in session.exec(select(Category)).all()}
+            fallback = session.exec(
+                select(Category).where(Category.name == "General & Miscellaneous")
+            ).first()
+            fallback_id = fallback.id if fallback else 1
+            fallback_name = fallback.name if fallback else "General & Miscellaneous"
+
+            for tx in transactions:
+                if not isinstance(tx, dict):
+                    continue
+                amount = tx.get("amount")
+                desc = tx.get("description", "Unknown")
+                cat_name = tx.get("category", fallback_name)
+
+                if amount is None or not isinstance(amount, (int, float)):
+                    continue
+
+                cat_id = cat_map.get(cat_name, fallback_id)
+                if cat_name not in cat_map:
+                    cat_name = fallback_name
+                    cat_id = fallback_id
+
+                parsed.append({
+                    "amount": float(amount),
+                    "description": str(desc),
+                    "category_id": cat_id,
+                    "category_name": cat_name
+                })
+
+        logger.info(f"Parsed {len(parsed)} transactions from bulk text")
+        return parsed
+
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse LLM JSON response: {e}")
+        return []
+    except Exception as e:
+        logger.error(f"Bulk transaction parsing failed: {e}")
+        return []
