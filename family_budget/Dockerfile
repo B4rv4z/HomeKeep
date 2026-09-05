@@ -6,9 +6,14 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Install minimal OS dependencies
+# Install OS dependencies (including MuPDF requirements for PDF parsing)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    libmupdf-dev \
+    libfreetype6-dev \
+    libharfbuzz-dev \
+    libjpeg-dev \
+    libopenjp2-7-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
