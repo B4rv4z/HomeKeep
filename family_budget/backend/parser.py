@@ -179,6 +179,8 @@ def parse_bulk_transactions(text: str) -> tuple[List[dict], str]:
     categories_str = ", ".join(categories)
 
     try:
+        import json
+
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
@@ -190,10 +192,8 @@ def parse_bulk_transactions(text: str) -> tuple[List[dict], str]:
                         f"1. amount (numeric, positive value)\n"
                         f"2. description (merchant/business name)\n"
                         f"3. category (classify into one of: {categories_str})\n\n"
-                        f"Return ONLY a JSON array with objects having keys: amount, description, category\n"
-                        f"Example: [{{'amount': 150.50, 'description': 'Shufersal', 'category': 'Groceries & Supermarket'}}]\n"
-                        f"If you cannot find any transactions, return an empty array: []\n"
-                        f"Do NOT include any explanation, just the JSON array."
+                        f"Return a JSON object with a 'transactions' array containing objects with keys: amount, description, category\n"
+                        f"If you cannot find any transactions, return: {{\"transactions\": []}}"
                     )
                 },
                 {
@@ -201,25 +201,21 @@ def parse_bulk_transactions(text: str) -> tuple[List[dict], str]:
                     "content": text
                 }
             ],
-            max_tokens=4000,
-            temperature=0
+            max_tokens=8000,
+            temperature=0,
+            response_format={"type": "json_object"}  # Force valid JSON output
         )
 
         result_text = response.choices[0].message.content.strip()
         logger.info(f"LLM bulk parse response: {result_text[:200]}...")
 
         # Parse JSON response
-        import json
-        # Handle markdown code blocks if present
-        if result_text.startswith("```"):
-            result_text = re.sub(r"```json?\s*", "", result_text)
-            result_text = re.sub(r"```\s*$", "", result_text)
-
-        transactions = json.loads(result_text)
+        result = json.loads(result_text)
+        transactions = result.get("transactions", [])
 
         if not isinstance(transactions, list):
             logger.warning("LLM did not return a list")
-            return []
+            return [], "Invalid response format"
 
         # Map category names to IDs
         parsed = []
