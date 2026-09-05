@@ -69,7 +69,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• `parking 30` → Transportation & Fuel\n\n"
         "*Bulk Import:*\n"
         "• `/bulk` followed by multiple lines\n"
-        "• Or upload a file (PDF, TXT, CSV)\n\n"
+        "• Or upload a file (PDF, TXT, CSV, XLSX)\n\n"
         "*Supported Keywords:*\n"
         "Groceries: supermarket, groceries, shufersal, rami levy, mega\n"
         "Transport: fuel, gas, charging, parking, sonol, paz\n"
@@ -103,7 +103,7 @@ async def bulk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Shufersal 150.00\n"
             "Wolt 89.50\n"
             "Paz Gas 220.00`\n\n"
-            "Or upload a file (PDF, TXT, CSV) with your statement.",
+            "Or upload a file (PDF, TXT, CSV, XLSX) with your statement.",
             parse_mode="Markdown"
         )
         return
@@ -133,13 +133,13 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Check file type
-    allowed_extensions = [".txt", ".csv", ".pdf"]
+    allowed_extensions = [".txt", ".csv", ".pdf", ".xlsx", ".xls"]
     file_ext = "." + file_name.split(".")[-1].lower() if "." in file_name else ""
 
     if file_ext not in allowed_extensions:
         await update.message.reply_text(
             f"Unsupported file type: {file_ext}\n"
-            f"Supported formats: TXT, CSV, PDF"
+            f"Supported formats: TXT, CSV, PDF, XLSX"
         )
         return
 
@@ -153,6 +153,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Extract text based on file type
         if file_ext == ".pdf":
             text = extract_text_from_pdf(file_bytes)
+        elif file_ext in [".xlsx", ".xls"]:
+            text = extract_text_from_xlsx(file_bytes)
         else:
             # TXT or CSV - decode as text
             text = file_bytes.decode("utf-8", errors="ignore")
@@ -183,6 +185,33 @@ def extract_text_from_pdf(pdf_bytes: bytes) -> str:
         return ""
     except Exception as e:
         logger.error(f"PDF extraction error: {e}")
+        return ""
+
+
+def extract_text_from_xlsx(xlsx_bytes: bytes) -> str:
+    """Extract text from Excel (XLSX) bytes. Converts all cells to text format."""
+    try:
+        from openpyxl import load_workbook
+        from io import BytesIO
+
+        workbook = load_workbook(filename=BytesIO(xlsx_bytes), read_only=True, data_only=True)
+        lines = []
+
+        for sheet in workbook.worksheets:
+            for row in sheet.iter_rows(values_only=True):
+                # Filter out None values and convert to strings
+                row_values = [str(cell) if cell is not None else "" for cell in row]
+                # Skip completely empty rows
+                if any(v.strip() for v in row_values):
+                    lines.append(" ".join(row_values))
+
+        workbook.close()
+        return "\n".join(lines)
+    except ImportError:
+        logger.warning("openpyxl not installed - XLSX parsing unavailable")
+        return ""
+    except Exception as e:
+        logger.error(f"XLSX extraction error: {e}")
         return ""
 
 
