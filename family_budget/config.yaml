@@ -17,6 +17,8 @@ map:
 options:
   telegram_bot_token: ""
   allowed_user_ids: ""
+  openai_api_key: ""
 schema:
   telegram_bot_token: "str"
   allowed_user_ids: "str?"
+  openai_api_key: "str?"

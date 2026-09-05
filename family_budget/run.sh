@@ -6,6 +6,7 @@ if [ -f /data/options.json ]; then
     echo "Running as Home Assistant Add-on, loading configuration..."
     export TELEGRAM_BOT_TOKEN=$(python3 -c "import json; print(json.load(open('/data/options.json')).get('telegram_bot_token', ''))")
     export ALLOWED_USER_IDS=$(python3 -c "import json; print(json.load(open('/data/options.json')).get('allowed_user_ids', ''))")
+    export OPENAI_API_KEY=$(python3 -c "import json; print(json.load(open('/data/options.json')).get('openai_api_key', ''))")
 fi
 
 echo "============================================"

@@ -9,6 +9,8 @@ venv/
 # Data (keep structure, ignore actual db)
 data/*.db
 data/*.db-journal
+**/data/*.db
+**/data/*.db-journal
 
 # Environment
 .env
