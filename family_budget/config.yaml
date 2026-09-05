@@ -1,7 +1,7 @@
 name: "Family Budget Tracker"
 slug: "family_budget"
 description: "Zero-leakage local family finance manager with Telegram bot and SQLite"
-version: "1.0.0"
+version: "1.1.0"
 startup: "application"
 boot: "auto"
 arch:
