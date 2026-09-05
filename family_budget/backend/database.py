@@ -88,13 +88,13 @@ def init_db():
         # Seed default categories if empty
         if not session.exec(select(Category)).first():
             categories = [
-                Category(name="Groceries & Supermarket", type="variable", monthly_budget=4500.0),
-                Category(name="Transportation & Fuel", type="variable", monthly_budget=1200.0),
-                Category(name="Restaurants & Dining", type="variable", monthly_budget=1500.0),
-                Category(name="Kids & Education", type="variable", monthly_budget=1500.0),
-                Category(name="Housing & Utilities", type="fixed", monthly_budget=6000.0),
-                Category(name="Insurance & Health", type="fixed", monthly_budget=1200.0),
-                Category(name="General & Miscellaneous", type="variable", monthly_budget=1000.0),
+                Category(name="מזון וסופר", type="variable", monthly_budget=4500.0),
+                Category(name="תחבורה ודלק", type="variable", monthly_budget=1200.0),
+                Category(name="מסעדות ואוכל בחוץ", type="variable", monthly_budget=1500.0),
+                Category(name="ילדים וחינוך", type="variable", monthly_budget=1500.0),
+                Category(name="דיור וחשבונות", type="fixed", monthly_budget=6000.0),
+                Category(name="ביטוח ובריאות", type="fixed", monthly_budget=1200.0),
+                Category(name="כללי ושונות", type="variable", monthly_budget=1000.0),
             ]
             session.add_all(categories)
             session.commit()
@@ -102,25 +102,36 @@ def init_db():
             # Seed default keyword mappings
             cat_map = {c.name: c.id for c in session.exec(select(Category)).all()}
             mappings = [
-                # Groceries
-                KeywordMapping(keyword="supermarket", category_id=cat_map["Groceries & Supermarket"]),
-                KeywordMapping(keyword="groceries", category_id=cat_map["Groceries & Supermarket"]),
-                KeywordMapping(keyword="shufersal", category_id=cat_map["Groceries & Supermarket"]),
-                KeywordMapping(keyword="rami levy", category_id=cat_map["Groceries & Supermarket"]),
-                KeywordMapping(keyword="mega", category_id=cat_map["Groceries & Supermarket"]),
-                # Transportation
-                KeywordMapping(keyword="fuel", category_id=cat_map["Transportation & Fuel"]),
-                KeywordMapping(keyword="gas", category_id=cat_map["Transportation & Fuel"]),
-                KeywordMapping(keyword="charging", category_id=cat_map["Transportation & Fuel"]),
-                KeywordMapping(keyword="parking", category_id=cat_map["Transportation & Fuel"]),
-                KeywordMapping(keyword="sonol", category_id=cat_map["Transportation & Fuel"]),
-                KeywordMapping(keyword="paz", category_id=cat_map["Transportation & Fuel"]),
-                # Restaurants
-                KeywordMapping(keyword="coffee", category_id=cat_map["Restaurants & Dining"]),
-                KeywordMapping(keyword="restaurant", category_id=cat_map["Restaurants & Dining"]),
-                KeywordMapping(keyword="wolt", category_id=cat_map["Restaurants & Dining"]),
-                KeywordMapping(keyword="cafe", category_id=cat_map["Restaurants & Dining"]),
-                KeywordMapping(keyword="pizza", category_id=cat_map["Restaurants & Dining"]),
+                # Groceries / מזון וסופר
+                KeywordMapping(keyword="supermarket", category_id=cat_map["מזון וסופר"]),
+                KeywordMapping(keyword="groceries", category_id=cat_map["מזון וסופר"]),
+                KeywordMapping(keyword="shufersal", category_id=cat_map["מזון וסופר"]),
+                KeywordMapping(keyword="rami levy", category_id=cat_map["מזון וסופר"]),
+                KeywordMapping(keyword="mega", category_id=cat_map["מזון וסופר"]),
+                KeywordMapping(keyword="שופרסל", category_id=cat_map["מזון וסופר"]),
+                KeywordMapping(keyword="רמי לוי", category_id=cat_map["מזון וסופר"]),
+                KeywordMapping(keyword="ירקות", category_id=cat_map["מזון וסופר"]),
+                KeywordMapping(keyword="בשר", category_id=cat_map["מזון וסופר"]),
+                KeywordMapping(keyword="אטליז", category_id=cat_map["מזון וסופר"]),
+                # Transportation / תחבורה ודלק
+                KeywordMapping(keyword="fuel", category_id=cat_map["תחבורה ודלק"]),
+                KeywordMapping(keyword="gas", category_id=cat_map["תחבורה ודלק"]),
+                KeywordMapping(keyword="charging", category_id=cat_map["תחבורה ודלק"]),
+                KeywordMapping(keyword="parking", category_id=cat_map["תחבורה ודלק"]),
+                KeywordMapping(keyword="sonol", category_id=cat_map["תחבורה ודלק"]),
+                KeywordMapping(keyword="paz", category_id=cat_map["תחבורה ודלק"]),
+                KeywordMapping(keyword="דלק", category_id=cat_map["תחבורה ודלק"]),
+                KeywordMapping(keyword="חניה", category_id=cat_map["תחבורה ודלק"]),
+                KeywordMapping(keyword="טעינה", category_id=cat_map["תחבורה ודלק"]),
+                # Restaurants / מסעדות ואוכל בחוץ
+                KeywordMapping(keyword="coffee", category_id=cat_map["מסעדות ואוכל בחוץ"]),
+                KeywordMapping(keyword="restaurant", category_id=cat_map["מסעדות ואוכל בחוץ"]),
+                KeywordMapping(keyword="wolt", category_id=cat_map["מסעדות ואוכל בחוץ"]),
+                KeywordMapping(keyword="cafe", category_id=cat_map["מסעדות ואוכל בחוץ"]),
+                KeywordMapping(keyword="pizza", category_id=cat_map["מסעדות ואוכל בחוץ"]),
+                KeywordMapping(keyword="קפה", category_id=cat_map["מסעדות ואוכל בחוץ"]),
+                KeywordMapping(keyword="מסעדה", category_id=cat_map["מסעדות ואוכל בחוץ"]),
+                KeywordMapping(keyword="פיצה", category_id=cat_map["מסעדות ואוכל בחוץ"]),
             ]
             session.add_all(mappings)
             session.commit()

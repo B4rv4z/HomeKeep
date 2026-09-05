@@ -77,35 +77,34 @@ def calculate_monthly_analytics(year: int, month: int) -> Dict[str, Any]:
                 "remaining": round(diff, 2)
             })
 
-            # Threshold Alert (Exceeding Budget)
+            # Threshold Alert (Exceeding Budget) - Hebrew
             if budget > 0 and spent > budget:
                 alerts.append(
-                    f"Over budget in '{cat.name}': Spent {spent:,.0f} of {budget:,.0f} ({pct_used:.0f}%)."
+                    f"חריגה מתקציב ב'{cat.name}': הוצאת ₪{spent:,.0f} מתוך ₪{budget:,.0f} ({pct_used:.0f}%)"
                 )
             elif budget > 0 and pct_used >= 80:
                 alerts.append(
-                    f"Approaching budget limit in '{cat.name}': {pct_used:.0f}% used."
+                    f"מתקרבים לגבול התקציב ב'{cat.name}': נוצלו {pct_used:.0f}%"
                 )
 
         # 5. Savings Rate Computation
         savings_rate = (total_invested / total_income * 100) if total_income > 0 else 0.0
 
-        # 6. Generate Insights & Recommendations
+        # 6. Generate Insights & Recommendations - Hebrew
         insights: List[str] = []
         if total_income > 0:
-            insights.append(f"Monthly Savings/Investment Rate: {savings_rate:.1f}%.")
+            insights.append(f"שיעור חיסכון/השקעה חודשי: {savings_rate:.1f}%")
             if savings_rate < 20.0:
-                insights.append("Recommendation: Target a minimum 20% savings & investment rate.")
+                insights.append("המלצה: שאפו לשיעור חיסכון והשקעה של לפחות 20%")
             else:
-                insights.append("Healthy savings discipline maintained this month.")
+                insights.append("משמעת חיסכון בריאה נשמרת החודש")
 
         if total_bonus > 0:
             if total_invested >= (total_bonus * 0.5):
-                insights.append("Bonus allocation verified: 50%+ of bonus deployed into investments.")
+                insights.append("הקצאת בונוס אומתה: מעל 50% מהבונוס הופנה להשקעות")
             else:
                 insights.append(
-                    "Bonus notice: Consider allocating a higher portion of this month's bonus "
-                    "into investment accounts."
+                    "הערה על בונוס: שקלו להקצות חלק גדול יותר מהבונוס החודשי להשקעות"
                 )
 
         # Net balance (income - expenses - investments)

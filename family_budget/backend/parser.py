@@ -222,10 +222,10 @@ def parse_bulk_transactions(text: str) -> tuple[List[dict], str]:
         with Session(engine) as session:
             cat_map = {c.name: c.id for c in session.exec(select(Category)).all()}
             fallback = session.exec(
-                select(Category).where(Category.name == "General & Miscellaneous")
+                select(Category).where(Category.name == "כללי ושונות")
             ).first()
             fallback_id = fallback.id if fallback else 1
-            fallback_name = fallback.name if fallback else "General & Miscellaneous"
+            fallback_name = fallback.name if fallback else "כללי ושונות"
 
             for tx in transactions:
                 if not isinstance(tx, dict):
