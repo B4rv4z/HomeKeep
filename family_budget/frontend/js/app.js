@@ -695,6 +695,13 @@ function renderCategoriesList() {
   });
   container.querySelectorAll('.save-cat-btn').forEach(btn => btn.addEventListener('click', handleSaveCategory));
   container.querySelectorAll('.delete-cat-btn').forEach(btn => btn.addEventListener('click', handleDeleteCategory));
+
+  // Calculate and display total budget
+  const totalBudget = categories.reduce((sum, cat) => sum + (cat.monthly_budget || 0), 0);
+  const totalEl = document.getElementById("total-budget-sum");
+  if (totalEl) {
+    totalEl.textContent = `₪${totalBudget.toLocaleString()}`;
+  }
 }
 
 async function handleSaveCategory(e) {

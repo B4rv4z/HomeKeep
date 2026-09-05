@@ -174,16 +174,26 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def extract_text_from_pdf(pdf_bytes: bytes) -> str:
     """Extract text from PDF bytes. Falls back to empty if PyMuPDF not installed."""
     try:
-        import fitz  # PyMuPDF
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        import pymupdf
+        doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
         text = ""
         for page in doc:
             text += page.get_text()
         doc.close()
         return text
     except ImportError:
-        logger.warning("PyMuPDF not installed - PDF parsing unavailable")
-        return ""
+        # Try legacy import for older versions
+        try:
+            import fitz
+            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+            text = ""
+            for page in doc:
+                text += page.get_text()
+            doc.close()
+            return text
+        except ImportError:
+            logger.warning("PyMuPDF not installed - PDF parsing unavailable")
+            return ""
     except Exception as e:
         logger.error(f"PDF extraction error: {e}")
         return ""
