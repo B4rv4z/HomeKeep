@@ -341,6 +341,104 @@ def get_category_by_keywords(description: str) -> Optional[Tuple[int, str]]:
         return None
 
 
+def categorize_transactions(transactions: List[dict]) -> List[dict]:
+    """
+    Categorize transactions using keyword matching first, then GPT for unknowns.
+
+    This is used for direct XLSX parsing where we have transactions but no categories.
+    Much more reliable than asking GPT to parse + categorize in one shot.
+
+    Args:
+        transactions: List of dicts with amount, description, transaction_date, etc.
+                     category_id and category_name should be None.
+
+    Returns:
+        Same list with category_id and category_name filled in.
+    """
+    client = get_openai_client()
+    categories = get_category_names()
+
+    with Session(engine) as session:
+        cat_map = {c.name: c.id for c in session.exec(select(Category)).all()}
+        fallback = session.exec(
+            select(Category).where(Category.name == "כללי ושונות")
+        ).first()
+        fallback_id = fallback.id if fallback else 1
+        fallback_name = fallback.name if fallback else "כללי ושונות"
+
+    # First pass: try keyword matching (fast, free)
+    uncategorized = []
+    for tx in transactions:
+        keyword_match = get_category_by_keywords(tx["description"])
+        if keyword_match:
+            tx["category_id"], tx["category_name"] = keyword_match
+        else:
+            uncategorized.append(tx)
+
+    logger.info(f"Keyword matching: {len(transactions) - len(uncategorized)}/{len(transactions)} categorized")
+
+    # Second pass: use GPT for remaining uncategorized
+    if uncategorized and client:
+        # Build unique descriptions list
+        unique_descs = list(set(tx["description"] for tx in uncategorized))
+        logger.info(f"Sending {len(unique_descs)} unique descriptions to GPT for categorization")
+
+        categories_str = ", ".join(categories)
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            f"You are a categorizer for Israeli expenses. "
+                            f"Given a list of merchant/expense descriptions, classify each into exactly one of these categories:\n"
+                            f"{categories_str}\n\n"
+                            f"If unsure, use 'כללי ושונות'.\n\n"
+                            f"Return JSON: {{\"categories\": {{\"description1\": \"category1\", \"description2\": \"category2\", ...}}}}"
+                        )
+                    },
+                    {
+                        "role": "user",
+                        "content": f"Categorize these expenses:\n" + "\n".join(unique_descs)
+                    }
+                ],
+                max_tokens=2000,
+                temperature=0,
+                response_format={"type": "json_object"}
+            )
+
+            result_text = response.choices[0].message.content.strip()
+            result = json.loads(result_text)
+            gpt_categories = result.get("categories", {})
+
+            # Apply GPT categories to uncategorized transactions
+            for tx in uncategorized:
+                cat_name = gpt_categories.get(tx["description"], fallback_name)
+                if cat_name in cat_map:
+                    tx["category_id"] = cat_map[cat_name]
+                    tx["category_name"] = cat_name
+                else:
+                    tx["category_id"] = fallback_id
+                    tx["category_name"] = fallback_name
+
+            logger.info(f"GPT categorized {len(uncategorized)} transactions")
+
+        except Exception as e:
+            logger.error(f"GPT categorization failed: {e}")
+            # Fallback: assign default category to all uncategorized
+            for tx in uncategorized:
+                tx["category_id"] = fallback_id
+                tx["category_name"] = fallback_name
+    else:
+        # No GPT available or no uncategorized - use fallback
+        for tx in uncategorized:
+            tx["category_id"] = fallback_id
+            tx["category_name"] = fallback_name
+
+    return transactions
+
+
 def clean_pdf_text(text: str) -> str:
     """
     Clean PDF extracted text to make it easier for LLM to parse.
@@ -402,7 +500,7 @@ def clean_pdf_text(text: str) -> str:
     return text.strip()
 
 
-def parse_bulk_transactions(text: str) -> tuple[List[dict], str]:
+def parse_bulk_transactions(text: str) -> tuple[List[dict], str, float]:
     """
     Parse bulk credit card transactions using OpenAI.
 
@@ -410,12 +508,12 @@ def parse_bulk_transactions(text: str) -> tuple[List[dict], str]:
         text: Raw text from CC statement (could be copy-pasted, PDF text, etc.)
 
     Returns:
-        Tuple of (transactions list, error message or empty string)
+        Tuple of (transactions list, error message or empty string, expected_total from document)
     """
     client = get_openai_client()
     if not client:
         logger.warning("OpenAI not configured, cannot parse bulk transactions")
-        return [], "OpenAI not configured"
+        return [], "OpenAI not configured", 0.0
 
     categories = get_category_names()
     categories_str = ", ".join(categories)
@@ -426,7 +524,8 @@ def parse_bulk_transactions(text: str) -> tuple[List[dict], str]:
         logger.info(f"Cleaned text length: {len(text)} chars")
 
         # Truncate text if too long (OpenAI has token limits)
-        max_chars = 10000
+        # Increased from 10000 to 25000 for better PDF coverage
+        max_chars = 25000
         if len(text) > max_chars:
             text = text[:max_chars]
             logger.info(f"Truncated text to {max_chars} characters")
@@ -490,7 +589,16 @@ def parse_bulk_transactions(text: str) -> tuple[List[dict], str]:
                         f"   - Israeli dates are typically DD/MM/YY or DD-MM-YYYY format - convert to YYYY-MM-DD\n"
                         f"   - If year is 2-digit (e.g., 26), assume 20XX (2026)\n"
                         f"   - If date is not found, use null\n\n"
-                        f"Return valid JSON: {{\"transactions\": [{{\"amount\": 78.0, \"original_amount\": 780.0, \"description\": \"Store\", \"category\": \"קטגוריה\", \"date\": \"2026-01-15\", \"installment_current\": 3, \"installment_total\": 10}}]}}\n"
+                        f"EXTRACT DOCUMENT TOTAL:\n"
+                        f"Find and return the TOTAL charge amount for this billing cycle.\n"
+                        f"CRITICAL: Israeli CC statements often have MULTIPLE sections with separate totals.\n"
+                        f"You MUST find ALL 'סה\"כ חיוב לתאריך' or 'חיוב כ\"סה' lines and ADD THEM UP:\n"
+                        f"- Domestic transactions section (בארץ) - look for total line\n"
+                        f"- Foreign transactions section (חו\"ל) - look for its separate total line\n"
+                        f"- If there's a discount (הנחה), the final total line may reflect it\n"
+                        f"Calculate document_total = sum of all section totals (or use the final grand total if shown)\n"
+                        f"Example: domestic=3,590.51 + foreign=309.80 = document_total=3,900.31\n\n"
+                        f"Return valid JSON: {{\"transactions\": [{{\"amount\": 78.0, \"original_amount\": 780.0, \"description\": \"Store\", \"category\": \"קטגוריה\", \"date\": \"2026-01-15\", \"installment_current\": 3, \"installment_total\": 10}}], \"document_total\": 1234.56}}\n"
                         f"Note: original_amount, installment_current, and installment_total are optional - only include for installment payments."
                     )
                 },
@@ -499,7 +607,7 @@ def parse_bulk_transactions(text: str) -> tuple[List[dict], str]:
                     "content": f"Extract ALL transactions from this Israeli credit card statement:\n\n{text}"
                 }
             ],
-            max_tokens=4000,
+            max_tokens=8000,
             temperature=0,
             response_format={"type": "json_object"}
         )
@@ -512,13 +620,19 @@ def parse_bulk_transactions(text: str) -> tuple[List[dict], str]:
         result = repair_json(result_text)
         if result is None:
             logger.error(f"Failed to parse/repair JSON. Raw response: {result_text[:500]}")
-            return [], f"JSON parse error - could not repair response"
+            return [], f"JSON parse error - could not repair response", 0.0
 
         transactions = result.get("transactions", [])
+        document_total = result.get("document_total", 0.0)
+        if isinstance(document_total, (int, float)):
+            document_total = float(document_total)
+        else:
+            document_total = 0.0
+        logger.info(f"LLM extracted document_total: {document_total}")
 
         if not isinstance(transactions, list):
             logger.warning("LLM did not return a list")
-            return [], "Invalid response format"
+            return [], "Invalid response format", document_total
 
         # Map category names to IDs, applying learned keyword mappings
         parsed = []
@@ -584,12 +698,12 @@ def parse_bulk_transactions(text: str) -> tuple[List[dict], str]:
         if learned_matches > 0:
             logger.info(f"Applied learned keyword mappings to {learned_matches}/{len(parsed)} transactions")
 
-        logger.info(f"Parsed {len(parsed)} transactions from bulk text")
-        return parsed, ""
+        logger.info(f"Parsed {len(parsed)} transactions from bulk text, document_total: {document_total}")
+        return parsed, "", document_total
 
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse LLM JSON response: {e}")
-        return [], f"JSON parse error: {e}"
+        return [], f"JSON parse error: {e}", 0.0
     except Exception as e:
         logger.error(f"Bulk transaction parsing failed: {e}")
-        return [], f"OpenAI error: {e}"
+        return [], f"OpenAI error: {e}", 0.0

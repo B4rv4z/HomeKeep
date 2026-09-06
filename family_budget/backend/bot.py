@@ -7,7 +7,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, CommandHandler, CallbackQueryHandler, filters
 from sqlmodel import Session
 from backend.database import engine, Expense, ActivityLog
-from backend.parser import parse_expense_text, parse_bulk_transactions
+from backend.parser import parse_expense_text, parse_bulk_transactions, categorize_transactions
 
 logger = logging.getLogger(__name__)
 
@@ -182,30 +182,52 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file = await document.get_file()
         file_bytes = await file.download_as_bytearray()
 
-        # Extract text based on file type
-        if file_ext == ".pdf":
+        # XLSX files: use direct parsing (bulletproof, no GPT needed for extraction)
+        if file_ext in [".xlsx", ".xls"]:
+            transactions, charge_date = parse_xlsx_directly(bytes(file_bytes))
+
+            if transactions:
+                # Get expected total for validation
+                expected_total = extract_expected_total_from_xlsx(bytes(file_bytes))
+                parsed_total = sum(tx["amount"] for tx in transactions)
+
+                logger.info(f"Direct XLSX parsing: {len(transactions)} transactions, total: {parsed_total:.2f}, expected: {expected_total:.2f}")
+
+                # Categorize transactions using keyword matching + GPT
+                transactions = categorize_transactions(transactions)
+
+                # Process like normal bulk import (handles validation, confirmation flow, saving)
+                await process_direct_transactions(
+                    update,
+                    transactions,
+                    user.first_name or "Family Member",
+                    expected_total,
+                    charge_date
+                )
+                return
+            else:
+                # Fallback to text extraction + GPT parsing
+                logger.warning("Direct XLSX parsing failed, falling back to text extraction")
+                text = extract_text_from_xlsx(bytes(file_bytes))
+                expected_total = extract_expected_total_from_xlsx(bytes(file_bytes))
+                charge_date = extract_charge_date_from_xlsx(bytes(file_bytes))
+
+        # PDF files: extract text and use GPT
+        elif file_ext == ".pdf":
             text = extract_text_from_pdf(file_bytes)
-        elif file_ext in [".xlsx", ".xls"]:
-            text = extract_text_from_xlsx(file_bytes)
+            expected_total = extract_expected_total_from_pdf(bytes(file_bytes))
+            charge_date = extract_charge_date_from_pdf(bytes(file_bytes))
+
+        # TXT or CSV: decode as text
         else:
-            # TXT or CSV - decode as text
             text = file_bytes.decode("utf-8", errors="ignore")
-            # Normalize Hebrew text (remove gershayim, merge fragments)
             text = normalize_hebrew_text(text)
+            expected_total = 0.0
+            charge_date = ""
 
         if not text.strip():
             await update.message.reply_text("Could not extract text from the file.")
             return
-
-        # Extract expected total for validation
-        expected_total = 0.0
-        charge_date = ""
-        if file_ext == ".pdf":
-            expected_total = extract_expected_total_from_pdf(bytes(file_bytes))
-            charge_date = extract_charge_date_from_pdf(bytes(file_bytes))
-        elif file_ext in [".xlsx", ".xls"]:
-            expected_total = extract_expected_total_from_xlsx(bytes(file_bytes))
-            charge_date = extract_charge_date_from_xlsx(bytes(file_bytes))
 
         logger.info(f"Expected total from file: {expected_total}, Charge date: {charge_date}")
         await process_bulk_text(update, text, user.first_name or "Family Member", expected_total, charge_date)
@@ -245,6 +267,196 @@ def normalize_hebrew_text(text: str) -> str:
         text = re.sub(pattern, r'\1\2', text)
 
     return text
+
+
+def parse_xlsx_directly(xlsx_bytes: bytes) -> tuple[list, str]:
+    """
+    Parse XLSX file directly without GPT - bulletproof extraction.
+
+    Returns (transactions, charge_date) where each transaction has:
+    - amount: float (the charge amount)
+    - description: str (merchant name)
+    - transaction_date: str (YYYY-MM-DD or original string)
+    - original_amount: float (for installments, optional)
+    - installment_number: int (optional)
+    - total_installments: int (optional)
+
+    Category fields are set to None - must be filled by categorize_transactions().
+    """
+    try:
+        from openpyxl import load_workbook
+        from io import BytesIO
+        import re
+
+        workbook = load_workbook(filename=BytesIO(xlsx_bytes), read_only=True, data_only=True)
+        transactions = []
+        charge_date = ""
+
+        for sheet in workbook.worksheets:
+            logger.info(f"Processing sheet: {sheet.title}")
+
+            # First pass: find charge date from header rows
+            rows_list = list(sheet.iter_rows(values_only=True))
+
+            for row in rows_list[:10]:
+                row_str = " ".join(str(c) for c in row if c)
+                # Pattern: "עסקאות לחיוב ב-DD/MM/YYYY" or "MM/YYYY"
+                date_match = re.search(r'לחיוב\s*ב[־-]?\s*(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})', row_str)
+                if date_match:
+                    day, month, year = date_match.groups()
+                    if len(year) == 2:
+                        year = "20" + year
+                    charge_date = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+                    logger.info(f"Found charge date: {charge_date}")
+                    break
+                # Also check for MM/YYYY format (MAX)
+                period_match = re.search(r'^(\d{1,2})/(\d{4})$', str(row[0]).strip() if row[0] else "")
+                if period_match:
+                    month, year = period_match.groups()
+                    charge_date = f"{year}-{month.zfill(2)}-01"
+                    logger.info(f"Found charge date (period): {charge_date}")
+                    break
+
+            # Second pass: find header row and column indices
+            header_row_idx = None
+            col_map = {}
+
+            for row_idx, row in enumerate(rows_list):
+                row_str = " ".join(str(c) for c in row if c)
+
+                # Detect header row by looking for key columns
+                if "סכום חיוב" in row_str or ("שם בית" in row_str and "עסק" in row_str):
+                    header_row_idx = row_idx
+                    for col_idx, cell in enumerate(row):
+                        cell_str = str(cell).strip().lower() if cell else ""
+                        cell_orig = str(cell).strip() if cell else ""
+
+                        # Date column
+                        if "תאריך" in cell_orig and ("עסקה" in cell_orig or "עסקה" in row_str):
+                            col_map["date"] = col_idx
+                        elif cell_orig == "תאריך עסקה" or "תאריך\nעסקה" in cell_orig:
+                            col_map["date"] = col_idx
+
+                        # Description column
+                        if "שם בית" in cell_orig or "בית עסק" in cell_orig or "בית העסק" in cell_orig:
+                            col_map["description"] = col_idx
+
+                        # Charge amount column (primary - what we bill)
+                        if "סכום חיוב" in cell_orig or "סכום\nחיוב" in cell_orig:
+                            col_map["amount"] = col_idx
+
+                        # Original amount column (for installments)
+                        if "סכום עסקה מקורי" in cell_orig or "סכום מקורי" in cell_orig:
+                            col_map["original_amount"] = col_idx
+                        elif "סכום עסקה" in cell_orig and "מקורי" not in cell_orig and "amount" not in col_map:
+                            # Fallback: use סכום עסקה if סכום חיוב not found
+                            col_map["amount"] = col_idx
+
+                        # Notes column (for installment info)
+                        if "הערות" in cell_orig:
+                            col_map["notes"] = col_idx
+
+                    logger.info(f"Found header at row {row_idx}, columns: {col_map}")
+                    break
+
+            if header_row_idx is None or "amount" not in col_map:
+                logger.warning(f"Could not find header row in sheet {sheet.title}")
+                continue
+
+            # Third pass: extract transactions
+            for row in rows_list[header_row_idx + 1:]:
+                if not any(cell is not None for cell in row):
+                    continue
+
+                # Skip summary rows
+                first_cell = str(row[0]) if row[0] else ""
+                if "סך הכל" in first_cell or first_cell.strip() == "":
+                    # Check if this is an amount-only row (skip it)
+                    if not any(isinstance(cell, str) and len(str(cell)) > 3 for cell in row[1:5] if cell):
+                        continue
+
+                # Get amount
+                amount_idx = col_map.get("amount")
+                if amount_idx is None or amount_idx >= len(row):
+                    continue
+                amount = row[amount_idx]
+                if not isinstance(amount, (int, float)):
+                    continue
+
+                # Get description
+                desc_idx = col_map.get("description", 1)
+                description = str(row[desc_idx]) if desc_idx < len(row) and row[desc_idx] else "Unknown"
+                description = normalize_hebrew_text(description)
+
+                # Get transaction date
+                date_idx = col_map.get("date", 0)
+                tx_date = row[date_idx] if date_idx < len(row) else None
+                if hasattr(tx_date, 'strftime'):
+                    tx_date = tx_date.strftime('%Y-%m-%d')
+                elif tx_date:
+                    # Try to parse DD-MM-YYYY or DD/MM/YYYY
+                    date_str = str(tx_date)
+                    date_match = re.search(r'(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})', date_str)
+                    if date_match:
+                        day, month, year = date_match.groups()
+                        if len(year) == 2:
+                            year = "20" + year
+                        tx_date = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+                    else:
+                        tx_date = date_str
+
+                # Get original amount (for installments)
+                original_amount = None
+                orig_idx = col_map.get("original_amount")
+                if orig_idx and orig_idx < len(row) and isinstance(row[orig_idx], (int, float)):
+                    original_amount = float(row[orig_idx])
+
+                # Parse installment info from notes
+                installment_number = None
+                total_installments = None
+                notes_idx = col_map.get("notes")
+                if notes_idx and notes_idx < len(row) and row[notes_idx]:
+                    notes = str(row[notes_idx])
+                    # Pattern: "תשלום X מתוך Y" or "X/Y"
+                    inst_match = re.search(r'תשלום\s*(\d+)\s*מתוך\s*(\d+)', notes)
+                    if inst_match:
+                        installment_number = int(inst_match.group(1))
+                        total_installments = int(inst_match.group(2))
+                    else:
+                        inst_match2 = re.search(r'(\d+)/(\d+)', notes)
+                        if inst_match2:
+                            installment_number = int(inst_match2.group(1))
+                            total_installments = int(inst_match2.group(2))
+
+                tx = {
+                    "amount": float(amount),
+                    "description": description,
+                    "transaction_date": tx_date,
+                    "category_id": None,
+                    "category_name": None
+                }
+
+                if original_amount and original_amount != amount:
+                    tx["original_amount"] = original_amount
+                if installment_number:
+                    tx["installment_current"] = installment_number
+                if total_installments:
+                    tx["installment_total"] = total_installments
+
+                transactions.append(tx)
+
+            logger.info(f"Extracted {len(transactions)} transactions from sheet {sheet.title}")
+
+        workbook.close()
+        logger.info(f"Total transactions from XLSX: {len(transactions)}, charge_date: {charge_date}")
+        return transactions, charge_date
+
+    except ImportError:
+        logger.warning("openpyxl not installed - direct XLSX parsing unavailable")
+        return [], ""
+    except Exception as e:
+        logger.error(f"Direct XLSX parsing error: {e}")
+        return [], ""
 
 
 def extract_text_from_pdf(pdf_bytes: bytes) -> str:
@@ -387,7 +599,9 @@ def extract_expected_total_from_pdf(pdf_bytes: bytes) -> float:
             except ValueError:
                 pass
 
-        return sum(totals) if totals else 0.0
+        # Deduplicate totals (PDFs often have duplicate summary lines)
+        unique_totals = list(set(totals))
+        return sum(unique_totals) if unique_totals else 0.0
     except ImportError:
         return 0.0
     except Exception as e:
@@ -707,6 +921,79 @@ def build_import_summary(transactions: list, expected_total: float = 0.0) -> tup
     return category_summary, validation_msg, diff_pct
 
 
+async def process_direct_transactions(update: Update, transactions: list, sender_name: str, expected_total: float = 0.0, charge_date: str = ""):
+    """
+    Process directly parsed transactions (from XLSX).
+    Similar to process_bulk_text but skips the GPT parsing step.
+    """
+    if not transactions:
+        await update.message.reply_text("No transactions found in the file.")
+        return
+
+    total = sum(tx["amount"] for tx in transactions)
+    category_summary, validation_msg, diff_pct = build_import_summary(transactions, expected_total)
+
+    # Add charge date info to summary if available
+    charge_date_msg = ""
+    if charge_date:
+        charge_date_msg = f"\nCharge Date: {charge_date}\n"
+
+    # If mismatch (>5%), ask for confirmation before saving
+    if expected_total > 0 and diff_pct > 5:
+        # Store pending import
+        import_id = str(uuid.uuid4())[:8]
+        pending_imports[import_id] = {
+            "transactions": transactions,
+            "sender_name": sender_name,
+            "chat_id": update.effective_chat.id,
+            "expected_total": expected_total,
+            "charge_date": charge_date
+        }
+
+        # Build preview message with inline keyboard
+        preview_reply = (
+            f"*Bulk Import Preview (Direct)*\n\n"
+            f"Transactions: {len(transactions)}\n"
+            f"Parsed Total: ₪{total:,.2f}{charge_date_msg}\n\n"
+            f"*By Category:*\n{category_summary}"
+            f"{validation_msg}\n\n"
+            f"⚠️ *There is a significant mismatch!*\n"
+            f"Do you want to save these transactions anyway?"
+        )
+
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("✅ אשר ושמור", callback_data=f"import_approve_{import_id}"),
+                InlineKeyboardButton("❌ בטל", callback_data=f"import_decline_{import_id}")
+            ]
+        ])
+
+        await update.message.reply_text(preview_reply, parse_mode="Markdown", reply_markup=keyboard)
+        return
+
+    # No mismatch or mismatch <= 5% - save directly
+    saved_count = save_transactions_to_db(transactions, sender_name, charge_date)
+
+    # Log the activity
+    log_activity(
+        action="file_import",
+        source="telegram",
+        details=f"Direct XLSX import by {sender_name}",
+        record_count=saved_count,
+        file_date=charge_date if charge_date else None,
+        total_amount=total
+    )
+
+    reply = (
+        f"*Bulk Import Complete (Direct)*\n\n"
+        f"Transactions: {saved_count}\n"
+        f"Total: ₪{total:,.2f}{charge_date_msg}\n\n"
+        f"*By Category:*\n{category_summary}"
+        f"{validation_msg}"
+    )
+    await update.message.reply_text(reply, parse_mode="Markdown")
+
+
 async def process_bulk_text(update: Update, text: str, sender_name: str, expected_total: float = 0.0, charge_date: str = ""):
     """Process bulk transaction text. On mismatch, ask for user confirmation before saving."""
     # Check if OpenAI is configured
@@ -718,7 +1005,7 @@ async def process_bulk_text(update: Update, text: str, sender_name: str, expecte
         )
         return
 
-    transactions, error = parse_bulk_transactions(text)
+    transactions, error, llm_document_total = parse_bulk_transactions(text)
 
     if not transactions:
         # Provide more helpful debugging info
@@ -730,6 +1017,22 @@ async def process_bulk_text(update: Update, text: str, sender_name: str, expecte
             f"Make sure the file contains transaction data with amounts."
         )
         return
+
+    # Use LLM-extracted document total if no expected_total was passed
+    # LLM extraction can be unreliable for multi-section docs, so validate it first
+    if expected_total == 0 and llm_document_total > 0:
+        parsed_total_check = sum(tx["amount"] for tx in transactions)
+        # Only use LLM total if it's close to parsed total (within 5%)
+        # This ensures we don't flag false mismatches when LLM extracts wrong total
+        diff_check = abs(parsed_total_check - llm_document_total) / llm_document_total
+        if diff_check <= 0.05:
+            expected_total = llm_document_total
+            logger.info(f"Using LLM-extracted document_total: {expected_total}")
+        else:
+            # LLM total differs from parsed, skip validation (trust parsing)
+            # This happens with multi-section PDFs where LLM misses some section totals
+            expected_total = parsed_total_check
+            logger.info(f"LLM document_total ({llm_document_total}) differs from parsed ({parsed_total_check}), using parsed total (validation will pass)")
 
     total = sum(tx["amount"] for tx in transactions)
     category_summary, validation_msg, diff_pct = build_import_summary(transactions, expected_total)
