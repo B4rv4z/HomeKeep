@@ -6,9 +6,7 @@ let categoryTrendChartInstance = null;
 let dayOfWeekChartInstance = null;
 let categories = [];
 let currentExpenses = [];
-let selectedExpenseMonth = null;
-let selectedReportsMonth = null;
-let selectedDashboardMonth = null;
+let selectedMonth = null; // Single global month for all tabs
 
 // ============ API Helpers ============
 
@@ -79,10 +77,10 @@ function switchTab(tabName) {
   }
 }
 
-// ============ Dashboard Tab ============
+// ============ Global Month Selector ============
 
-function initDashboardMonthSelector() {
-  const select = document.getElementById("dashboard-month-select");
+function initGlobalMonthSelector() {
+  const select = document.getElementById("global-month-select");
   if (select.options.length === 0) {
     const now = new Date();
     for (let i = 0; i < 12; i++) {
@@ -93,33 +91,40 @@ function initDashboardMonthSelector() {
       select.appendChild(option);
     }
   }
-  if (!selectedDashboardMonth) {
-    selectedDashboardMonth = select.value;
+  if (!selectedMonth) {
+    selectedMonth = select.value;
   }
-  select.value = selectedDashboardMonth;
+  select.value = selectedMonth;
 }
 
-function changeDashboardMonth(delta) {
-  const select = document.getElementById("dashboard-month-select");
+function changeGlobalMonth(delta) {
+  const select = document.getElementById("global-month-select");
   const newIndex = select.selectedIndex + delta;
   if (newIndex >= 0 && newIndex < select.options.length) {
     select.selectedIndex = newIndex;
-    loadDashboardByMonth();
+    loadByGlobalMonth();
   }
 }
 
-async function loadDashboardByMonth() {
-  const select = document.getElementById("dashboard-month-select");
-  selectedDashboardMonth = select.value;
-  await fetchDashboard();
+async function loadByGlobalMonth() {
+  const select = document.getElementById("global-month-select");
+  selectedMonth = select.value;
+  // Reload all data based on the new global month
+  await Promise.all([
+    fetchDashboard(),
+    loadExpensesByMonth(),
+    loadReportsData()
+  ]);
 }
+
+// ============ Dashboard Tab ============
 
 async function fetchDashboard() {
   try {
     // Build URL with selected month
     let url = "/api/analytics/monthly";
-    if (selectedDashboardMonth) {
-      const [year, month] = selectedDashboardMonth.split('-').map(Number);
+    if (selectedMonth) {
+      const [year, month] = selectedMonth.split('-').map(Number);
       url += `?year=${year}&month=${month}`;
     }
     const data = await apiGet(url);
@@ -451,37 +456,13 @@ function setupRecurringForm() {
 // ============ Expenses Tab ============
 
 function initExpensesTab() {
-  const select = document.getElementById("expense-month-select");
-  if (select.options.length === 0) {
-    const now = new Date();
-    for (let i = 0; i < 12; i++) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const option = document.createElement("option");
-      option.value = `${d.getFullYear()}-${d.getMonth() + 1}`;
-      option.textContent = d.toLocaleDateString('he-IL', { year: 'numeric', month: 'long' });
-      select.appendChild(option);
-    }
-  }
-  if (!selectedExpenseMonth) {
-    selectedExpenseMonth = select.value;
-  }
-  select.value = selectedExpenseMonth;
+  // Just load expenses using the global month
   loadExpensesByMonth();
 }
 
-function changeExpenseMonth(delta) {
-  const select = document.getElementById("expense-month-select");
-  const newIndex = select.selectedIndex + delta;
-  if (newIndex >= 0 && newIndex < select.options.length) {
-    select.selectedIndex = newIndex;
-    loadExpensesByMonth();
-  }
-}
-
 async function loadExpensesByMonth() {
-  const select = document.getElementById("expense-month-select");
-  selectedExpenseMonth = select.value;
-  const [year, month] = selectedExpenseMonth.split('-').map(Number);
+  if (!selectedMonth) return;
+  const [year, month] = selectedMonth.split('-').map(Number);
   try {
     currentExpenses = await apiGet(`/api/expenses/by-month?year=${year}&month=${month}`);
     const total = currentExpenses.reduce((sum, e) => sum + e.amount, 0);
@@ -493,9 +474,9 @@ async function loadExpensesByMonth() {
 }
 
 async function clearMonthExpenses() {
-  const select = document.getElementById("expense-month-select");
+  const select = document.getElementById("global-month-select");
   const monthLabel = select.options[select.selectedIndex].text;
-  const [year, month] = selectedExpenseMonth.split('-').map(Number);
+  const [year, month] = selectedMonth.split('-').map(Number);
 
   if (!confirm(`האם אתה בטוח שברצונך למחוק את כל ההוצאות של ${monthLabel}?\n\nפעולה זו בלתי הפיכה!`)) {
     return;
@@ -616,23 +597,10 @@ async function handleExpenseDelete(e) {
 // ============ Reports Tab ============
 
 async function loadReportsTab() {
-  // Initialize month selector if needed
-  const select = document.getElementById("reports-month-select");
-  if (select.options.length === 0) {
-    const now = new Date();
-    for (let i = 0; i < 12; i++) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const option = document.createElement("option");
-      option.value = `${d.getFullYear()}-${d.getMonth() + 1}`;
-      option.textContent = d.toLocaleDateString('he-IL', { year: 'numeric', month: 'long' });
-      select.appendChild(option);
-    }
-  }
-  if (!selectedReportsMonth) {
-    selectedReportsMonth = select.value;
-  }
-  select.value = selectedReportsMonth;
+  await loadReportsData();
+}
 
+async function loadReportsData() {
   try {
     // Load both comparison data and advanced analytics
     const [comparisonData] = await Promise.all([
@@ -648,9 +616,8 @@ async function loadReportsTab() {
 }
 
 async function loadAdvancedAnalytics() {
-  const select = document.getElementById("reports-month-select");
-  selectedReportsMonth = select.value;
-  const [year, month] = selectedReportsMonth.split('-').map(Number);
+  if (!selectedMonth) return;
+  const [year, month] = selectedMonth.split('-').map(Number);
 
   try {
     const data = await apiGet(`/api/analytics/advanced?year=${year}&month=${month}`);
@@ -1104,7 +1071,7 @@ function setupKeywordForm() {
 
 document.addEventListener("DOMContentLoaded", async () => {
   await loadCategories();
-  initDashboardMonthSelector();
+  initGlobalMonthSelector();
   await fetchDashboard();
   await fetchRecurringExpenses();
   setupFormHandlers();

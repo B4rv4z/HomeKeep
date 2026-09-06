@@ -190,7 +190,7 @@ def calculate_advanced_analytics(year: int, month: int) -> Dict[str, Any]:
                 "insights": []
             }
 
-        # 1. Find potential duplicates (same amount + similar description within 3 days)
+        # 1. Find potential duplicates (same amount + similar description on same day)
         potential_duplicates = []
         seen_pairs = set()
 
@@ -203,11 +203,11 @@ def calculate_advanced_analytics(year: int, month: int) -> Dict[str, Any]:
 
                 # Check if same amount
                 if abs(exp1.amount - exp2.amount) < 0.01:
-                    # Check if within 3 days (use effective date)
+                    # Check if same day (use effective date)
                     date1 = get_expense_effective_date(exp1)
                     date2 = get_expense_effective_date(exp2)
                     day_diff = abs((date1 - date2).days)
-                    if day_diff <= 3:
+                    if day_diff == 0:
                         # Check description similarity (simple: same first 5 chars or contains same word)
                         desc1_words = set(exp1.description.lower().split())
                         desc2_words = set(exp2.description.lower().split())

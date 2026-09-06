@@ -23,10 +23,10 @@
         <p class="text-xs text-slate-400">Local-First • Home Assistant Add-on</p>
       </div>
       <div class="flex items-center gap-3">
-        <button onclick="changeDashboardMonth(1)" class="bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded text-sm">◀</button>
-        <select id="dashboard-month-select" onchange="loadDashboardByMonth()" class="bg-slate-800 border border-slate-700 px-3 py-1.5 rounded-lg text-sm font-semibold text-slate-100">
+        <button onclick="changeGlobalMonth(1)" class="bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded text-sm">▶</button>
+        <select id="global-month-select" onchange="loadByGlobalMonth()" class="bg-slate-800 border border-slate-700 px-3 py-1.5 rounded-lg text-sm font-semibold text-slate-100">
         </select>
-        <button onclick="changeDashboardMonth(-1)" class="bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded text-sm">▶</button>
+        <button onclick="changeGlobalMonth(-1)" class="bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded text-sm">◀</button>
       </div>
     </header>
 
@@ -180,25 +180,16 @@
 
     <!-- ==================== EXPENSES TAB ==================== -->
     <div id="tab-expenses" class="tab-content mt-6">
-      <!-- Month Selector -->
+      <!-- Summary Bar -->
       <div class="bg-slate-800/60 p-4 rounded-xl border border-slate-700 mb-6">
         <div class="flex items-center justify-between flex-wrap gap-4">
-          <h3 class="text-sm font-bold text-slate-300">בחר חודש לצפייה</h3>
-          <div class="flex items-center gap-2">
-            <button onclick="changeExpenseMonth(1)" class="bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded text-sm">◀</button>
-            <select id="expense-month-select" onchange="loadExpensesByMonth()" class="bg-slate-900 border border-slate-700 p-2 rounded text-slate-100 text-sm">
-            </select>
-            <button onclick="changeExpenseMonth(-1)" class="bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded text-sm">▶</button>
+          <div class="text-sm">
+            <span class="text-slate-400">סה"כ הוצאות:</span>
+            <span id="expense-month-total" class="text-rose-400 font-bold mr-2">₪0</span>
           </div>
-          <div class="flex items-center gap-4">
-            <div class="text-sm">
-              <span class="text-slate-400">סה"כ הוצאות:</span>
-              <span id="expense-month-total" class="text-rose-400 font-bold mr-2">₪0</span>
-            </div>
-            <button onclick="clearMonthExpenses()" class="bg-rose-600/80 hover:bg-rose-600 text-white text-xs px-3 py-1.5 rounded transition">
-              מחק הוצאות החודש
-            </button>
-          </div>
+          <button onclick="clearMonthExpenses()" class="bg-rose-600/80 hover:bg-rose-600 text-white text-xs px-3 py-1.5 rounded transition">
+            מחק הוצאות החודש
+          </button>
         </div>
       </div>
 
@@ -236,17 +227,7 @@
 
     <!-- ==================== REPORTS TAB ==================== -->
     <div id="tab-reports" class="tab-content mt-6">
-      <!-- Month Selector for Advanced Analytics -->
-      <div class="bg-slate-800/60 p-4 rounded-xl border border-slate-700 mb-6">
-        <div class="flex items-center justify-between flex-wrap gap-4">
-          <h3 class="text-lg font-bold text-slate-200">דוחות וניתוח מתקדם</h3>
-          <div class="flex items-center gap-2">
-            <span class="text-sm text-slate-400">חודש לניתוח:</span>
-            <select id="reports-month-select" onchange="loadAdvancedAnalytics()" class="bg-slate-900 border border-slate-700 p-2 rounded text-slate-100 text-sm">
-            </select>
-          </div>
-        </div>
-      </div>
+      <h3 class="text-lg font-bold text-slate-200 mb-6">דוחות וניתוח מתקדם</h3>
 
       <!-- Quick Insights -->
       <div id="advanced-insights-card" class="mb-6 p-4 rounded-xl bg-gradient-to-r from-slate-800/80 to-slate-800/40 border border-slate-700 hidden">
@@ -277,7 +258,7 @@
       <!-- Potential Duplicates Section -->
       <div id="duplicates-section" class="bg-slate-800/40 p-5 rounded-xl border border-slate-700 mb-6 hidden">
         <h4 class="text-sm font-semibold mb-4 text-rose-400">⚠️ חיובים שעשויים להיות כפולים</h4>
-        <p class="text-xs text-slate-400 mb-3">חיובים עם סכום זהה ותיאור דומה בטווח של 3 ימים</p>
+        <p class="text-xs text-slate-400 mb-3">חיובים עם סכום זהה ותיאור דומה באותו יום</p>
         <div id="duplicates-list" class="space-y-3"></div>
       </div>
 
@@ -399,7 +380,7 @@
 
     <!-- Footer -->
     <footer class="mt-8 pt-4 border-t border-slate-800 text-center text-xs text-slate-500">
-      Family Budget Tracker v1.5.4 • Local-First • Zero Cloud Leakage
+      Family Budget Tracker v1.5.5 • Local-First • Zero Cloud Leakage
     </footer>
   </div>
 
