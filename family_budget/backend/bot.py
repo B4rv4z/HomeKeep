@@ -213,15 +213,46 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Error processing file: {str(e)}")
 
 
+def fix_fragmented_hebrew(text: str) -> str:
+    """
+    Fix fragmented Hebrew text by merging isolated letters that were split during PDF extraction.
+
+    Hebrew abbreviations (like פ״ת, בע״מ) often get fragmented during PDF extraction,
+    appearing as "פ ת" or "בע מ". Instead of trying to reconstruct the gershayim character,
+    we simply merge the fragments: "בנה פ" -> "בנהפ", "פ ת" -> "פת".
+
+    Only merges when the single letter is truly isolated at word end (followed by non-Hebrew).
+    """
+    import re
+
+    # Hebrew letter range (aleph to tav)
+    heb = r'[\u05D0-\u05EA]'
+
+    # Pattern: Short standalone Hebrew word (2-3 letters) at word boundary,
+    # followed by space + single letter at word end (before non-Hebrew or end)
+    # Uses word boundary \\b to ensure we're at a word start
+    # "בנה פ" -> "בנהפ", "בע מ" -> "בעמ", "פ ת" -> "פת"
+    pattern = rf'\b({heb}{{1,3}})\s+({heb})(?=[^{heb[1:-1]}]|$)'
+    text = re.sub(pattern, r'\1\2', text)
+
+    return text
+
+
 def extract_text_from_pdf(pdf_bytes: bytes) -> str:
-    """Extract text from PDF bytes. Falls back to empty if PyMuPDF not installed."""
+    """Extract text from PDF bytes. Falls back to empty if PyMuPDF not installed.
+
+    Uses sort=True for better RTL text handling and fixes fragmented Hebrew text.
+    """
     try:
         import pymupdf
         doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
         text = ""
         for page in doc:
-            text += page.get_text()
+            # sort=True improves RTL (Hebrew) text extraction
+            text += page.get_text("text", sort=True) + "\n"
         doc.close()
+        # Fix fragmented Hebrew text
+        text = fix_fragmented_hebrew(text)
         return text
     except ImportError:
         # Try legacy import for older versions
@@ -230,8 +261,9 @@ def extract_text_from_pdf(pdf_bytes: bytes) -> str:
             doc = fitz.open(stream=pdf_bytes, filetype="pdf")
             text = ""
             for page in doc:
-                text += page.get_text()
+                text += page.get_text("text", sort=True) + "\n"
             doc.close()
+            text = fix_fragmented_hebrew(text)
             return text
         except ImportError:
             logger.warning("PyMuPDF not installed - PDF parsing unavailable")
