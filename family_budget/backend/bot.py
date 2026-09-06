@@ -312,19 +312,33 @@ def extract_expected_total_from_pdf(pdf_bytes: bytes) -> float:
 
         totals = []
 
-        # Pattern 1: "סה"כ חיוב לתאריך XX/XX/XX XXXX.XX"
-        matches = re.findall(r'סה[״"\']כ\s*חיוב.*?(\d[\d,]*\.?\d*)', full_text, re.DOTALL)
+        # Pattern 1: "סה"כ חיוב לתאריך DD/MM/YY AMOUNT" - amount comes AFTER the date
+        # The date pattern is DD/MM/YY or DD/MM/YYYY, followed by whitespace/newlines, then the amount
+        matches = re.findall(
+            r'סה[״"\']כ[\s\n]*חיוב[\s\n]*לתאריך[\s\n]*\d{1,2}/\d{1,2}/\d{2,4}[\s\n]+(\d[\d,]*\.?\d*)',
+            full_text, re.DOTALL
+        )
         for m in matches:
             try:
                 amount = float(m.replace(",", ""))
-                if amount > 10:  # Filter out dates
+                if amount > 10:  # Filter out small numbers
                     totals.append(amount)
             except ValueError:
                 pass
 
-        # Pattern 2: Amount before "סה"כ"
+        # Pattern 2: Amount before "סה"כ" (some formats)
         matches2 = re.findall(r'(\d[\d,]*\.?\d*)\s*₪?\s*סה[״"\']כ', full_text)
         for m in matches2:
+            try:
+                amount = float(m.replace(",", ""))
+                if amount > 10:
+                    totals.append(amount)
+            except ValueError:
+                pass
+
+        # Pattern 3: Generic "סך הכל" followed by amount (with newlines)
+        matches3 = re.findall(r'סך[\s\n]*הכל[\s\n]+(\d[\d,]*\.?\d*)', full_text)
+        for m in matches3:
             try:
                 amount = float(m.replace(",", ""))
                 if amount > 10:
