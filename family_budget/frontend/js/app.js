@@ -215,12 +215,23 @@ async function fetchRecentExpenses() {
       return;
     }
     expenses.forEach((exp) => {
-      const date = new Date(exp.created_at).toLocaleDateString("he-IL");
+      // Priority: charge_date > transaction_date > created_at
+      const dateStr = exp.charge_date || exp.transaction_date || exp.created_at;
+      const date = new Date(dateStr).toLocaleDateString("he-IL");
       const sourceLabel = exp.source === 'file' ? 'קובץ' : 'ידני';
+
+      // Build installment badge if present
+      let installmentBadge = '';
+      if (exp.installment_number && exp.total_installments) {
+        const tooltipText = exp.original_amount ? `עסקה מקורית: ₪${exp.original_amount.toLocaleString()}` : `תשלום ${exp.installment_number} מתוך ${exp.total_installments}`;
+        installmentBadge = `<span class="text-xs px-1.5 py-0.5 rounded bg-purple-900/50 text-purple-400" title="${tooltipText}">תשלום ${exp.installment_number}/${exp.total_installments}</span>`;
+      }
+
       const item = document.createElement("div");
       item.className = "flex justify-between items-center py-2 border-b border-slate-700/50 group";
       item.innerHTML = `
         <div class="flex-1 flex items-center gap-2">
+          ${installmentBadge}
           <span class="text-slate-200">${exp.description}</span>
           <span class="text-slate-500">•</span>
           <select class="category-select bg-slate-800 border border-slate-600 text-slate-300 text-xs rounded px-2 py-1" data-expense-id="${exp.id}">
@@ -516,23 +527,37 @@ function renderExpensesTable(expenses) {
     return;
   }
   expenses.forEach(exp => {
-    // Use transaction_date if available, otherwise created_at
-    const dateStr = exp.transaction_date || exp.created_at;
+    // Priority: charge_date > transaction_date > created_at
+    const dateStr = exp.charge_date || exp.transaction_date || exp.created_at;
     const date = new Date(dateStr).toLocaleDateString("he-IL");
     const sourceLabel = exp.source === 'file' ? 'קובץ' : 'ידני';
+
+    // Build installment badge if present
+    let installmentBadge = '';
+    let amountTooltip = '';
+    if (exp.installment_number && exp.total_installments) {
+      installmentBadge = `<span class="text-xs px-1.5 py-0.5 rounded bg-purple-900/50 text-purple-400 mr-1" title="תשלום ${exp.installment_number} מתוך ${exp.total_installments}">תשלום ${exp.installment_number}/${exp.total_installments}</span>`;
+      if (exp.original_amount) {
+        amountTooltip = ` title="עסקה מקורית: ₪${exp.original_amount.toLocaleString()}"`;
+      }
+    }
+
     const tr = document.createElement("tr");
     tr.className = "hover:bg-slate-800/50";
     tr.innerHTML = `
       <td class="p-3 text-slate-300">${date}</td>
       <td class="p-3">
-        <input type="text" value="${exp.description}" class="expense-desc-input bg-transparent border-b border-transparent hover:border-slate-600 focus:border-emerald-500 focus:outline-none w-full" data-expense-id="${exp.id}" />
+        <div class="flex items-center gap-1">
+          ${installmentBadge}
+          <input type="text" value="${exp.description}" class="expense-desc-input bg-transparent border-b border-transparent hover:border-slate-600 focus:border-emerald-500 focus:outline-none flex-1" data-expense-id="${exp.id}" />
+        </div>
       </td>
       <td class="p-3">
         <select class="expense-cat-select bg-slate-800 border border-slate-600 text-slate-300 text-xs rounded px-2 py-1" data-expense-id="${exp.id}">
           ${categories.map(cat => `<option value="${cat.id}" ${cat.id === exp.category_id ? 'selected' : ''}>${cat.name}</option>`).join('')}
         </select>
       </td>
-      <td class="p-3">
+      <td class="p-3"${amountTooltip}>
         <input type="number" value="${exp.amount}" step="0.01" class="expense-amount-input bg-transparent border-b border-transparent hover:border-slate-600 focus:border-emerald-500 focus:outline-none w-20 text-rose-400 font-medium" data-expense-id="${exp.id}" />
       </td>
       <td class="p-3 text-center">

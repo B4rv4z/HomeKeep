@@ -509,7 +509,13 @@ async def get_monthly_comparison(
 
 
 def get_expense_effective_date(exp):
-    """Get the effective date for filtering - transaction_date if available, else created_at."""
+    """Get the effective date for filtering.
+
+    Priority: charge_date > transaction_date > created_at
+    charge_date is when money is actually debited (from statement header).
+    """
+    if exp.charge_date:
+        return exp.charge_date
     if exp.transaction_date:
         return exp.transaction_date
     return exp.created_at.date()
@@ -522,7 +528,7 @@ async def get_expenses_by_month(
     db: Session = Depends(get_session)
 ):
     """Get all expenses for a specific month with category names.
-    Uses transaction_date for filtering if available, otherwise created_at.
+    Uses charge_date for filtering if available, then transaction_date, then created_at.
     """
     all_expenses = db.exec(
         select(Expense).order_by(Expense.created_at.desc())
@@ -537,7 +543,7 @@ async def get_expenses_by_month(
     result = []
     for exp in month_expenses:
         cat = db.get(Category, exp.category_id)
-        result.append({
+        expense_data = {
             "id": exp.id,
             "amount": exp.amount,
             "description": exp.description,
@@ -546,9 +552,20 @@ async def get_expenses_by_month(
             "payer": exp.payer,
             "created_at": exp.created_at.isoformat(),
             "transaction_date": exp.transaction_date.isoformat() if exp.transaction_date else None,
+            "charge_date": exp.charge_date.isoformat() if exp.charge_date else None,
             "is_fixed": exp.is_fixed,
             "source": exp.source
-        })
+        }
+
+        # Add installment info if present
+        if exp.original_amount is not None:
+            expense_data["original_amount"] = exp.original_amount
+        if exp.installment_number is not None:
+            expense_data["installment_number"] = exp.installment_number
+        if exp.total_installments is not None:
+            expense_data["total_installments"] = exp.total_installments
+
+        result.append(expense_data)
 
     return result
 

@@ -171,13 +171,16 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Extract expected total for validation
         expected_total = 0.0
+        charge_date = ""
         if file_ext == ".pdf":
             expected_total = extract_expected_total_from_pdf(bytes(file_bytes))
+            charge_date = extract_charge_date_from_pdf(bytes(file_bytes))
         elif file_ext in [".xlsx", ".xls"]:
             expected_total = extract_expected_total_from_xlsx(bytes(file_bytes))
+            charge_date = extract_charge_date_from_xlsx(bytes(file_bytes))
 
-        logger.info(f"Expected total from file: {expected_total}")
-        await process_bulk_text(update, text, user.first_name or "Family Member", expected_total)
+        logger.info(f"Expected total from file: {expected_total}, Charge date: {charge_date}")
+        await process_bulk_text(update, text, user.first_name or "Family Member", expected_total, charge_date)
 
     except Exception as e:
         logger.error(f"Document processing error: {e}")
@@ -311,11 +314,135 @@ def extract_expected_total_from_pdf(pdf_bytes: bytes) -> float:
         return 0.0
 
 
+def extract_charge_date_from_pdf(pdf_bytes: bytes) -> str:
+    """
+    Extract the charge date from PDF CC statement.
+    Looks for patterns like "עסקאות לחיוב ב-DD/MM/YYYY" or "חיוב לתאריך DD/MM/YYYY".
+    Returns date in YYYY-MM-DD format or empty string if not found.
+    """
+    import re
+    try:
+        import pymupdf
+        doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+        full_text = ""
+        for page in doc:
+            full_text += page.get_text()
+        doc.close()
+
+        # Pattern 1: "עסקאות לחיוב ב-DD/MM/YYYY"
+        match = re.search(r'עסקאות\s*לחיוב\s*ב[־-]?\s*(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})', full_text)
+        if match:
+            day, month, year = match.groups()
+            if len(year) == 2:
+                year = "20" + year
+            return f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+
+        # Pattern 2: "חיוב לתאריך DD/MM/YYYY"
+        match = re.search(r'חיוב\s*לתאריך\s*(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})', full_text)
+        if match:
+            day, month, year = match.groups()
+            if len(year) == 2:
+                year = "20" + year
+            return f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+
+        # Pattern 3: "לחיוב בתאריך DD/MM/YYYY"
+        match = re.search(r'לחיוב\s*בתאריך\s*(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})', full_text)
+        if match:
+            day, month, year = match.groups()
+            if len(year) == 2:
+                year = "20" + year
+            return f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+
+        return ""
+    except ImportError:
+        return ""
+    except Exception as e:
+        logger.error(f"Error extracting charge date from PDF: {e}")
+        return ""
+
+
+def extract_charge_date_from_xlsx(xlsx_bytes: bytes) -> str:
+    """
+    Extract the charge date from XLSX CC statement header.
+    Supports multiple formats:
+    1. "עסקאות לחיוב ב-DD/MM/YYYY" pattern (Isracard/CAL)
+    2. "MM/YYYY" period format (MAX) - returns first day of month
+    3. Per-row "תאריך חיוב" column (returns first non-empty value)
+    Returns date in YYYY-MM-DD format or empty string if not found.
+    """
+    import re
+    try:
+        from openpyxl import load_workbook
+        from io import BytesIO
+
+        workbook = load_workbook(filename=BytesIO(xlsx_bytes), read_only=True, data_only=True)
+
+        for sheet in workbook.worksheets:
+            charge_date_col_idx = None
+
+            # Check first 10 rows for the charge date header
+            for row_idx, row in enumerate(sheet.iter_rows(max_row=10, values_only=True), start=1):
+                row_str = " ".join([str(c) if c else "" for c in row])
+
+                # Pattern 1: "עסקאות לחיוב ב-DD/MM/YYYY" or "עסקאות לחיוב ב-DD-MM-YYYY"
+                match = re.search(r'עסקאות\s*לחיוב\s*ב[־-]?\s*(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})', row_str)
+                if match:
+                    day, month, year = match.groups()
+                    if len(year) == 2:
+                        year = "20" + year
+                    charge_date = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+                    logger.info(f"Extracted charge date from XLSX (pattern 1): {charge_date}")
+                    workbook.close()
+                    return charge_date
+
+                # Pattern 2: "MM/YYYY" period format (MAX card exports) - standalone cell
+                for cell in row:
+                    if cell:
+                        cell_str = str(cell).strip()
+                        period_match = re.match(r'^(\d{1,2})/(\d{4})$', cell_str)
+                        if period_match:
+                            month, year = period_match.groups()
+                            # Use first day of month as charge date
+                            charge_date = f"{year}-{month.zfill(2)}-01"
+                            logger.info(f"Extracted charge date from XLSX (period format): {charge_date}")
+                            workbook.close()
+                            return charge_date
+
+                # Check if this row is a header row with "תאריך חיוב" column
+                for col_idx, cell in enumerate(row):
+                    if cell and "תאריך חיוב" in str(cell):
+                        charge_date_col_idx = col_idx
+                        break
+
+            # Pattern 3: If we found a תאריך חיוב column, get the first data value
+            if charge_date_col_idx is not None:
+                for row in sheet.iter_rows(min_row=5, max_row=20, values_only=True):
+                    if len(row) > charge_date_col_idx and row[charge_date_col_idx]:
+                        date_val = str(row[charge_date_col_idx])
+                        # Parse DD-MM-YYYY or DD/MM/YYYY
+                        match = re.search(r'(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})', date_val)
+                        if match:
+                            day, month, year = match.groups()
+                            if len(year) == 2:
+                                year = "20" + year
+                            charge_date = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+                            logger.info(f"Extracted charge date from XLSX (column): {charge_date}")
+                            workbook.close()
+                            return charge_date
+
+        workbook.close()
+        return ""
+    except Exception as e:
+        logger.error(f"Error extracting charge date from XLSX: {e}")
+        return ""
+
+
 def extract_text_from_xlsx(xlsx_bytes: bytes) -> str:
     """
     Extract text from Excel (XLSX) bytes.
     Smart handling for Israeli credit card statements which have multiple amount columns.
     Specifically extracts only the charge amount (סכום חיוב) not the original amount (סכום עסקה מקורי).
+    Also includes the header row with charge date for GPT to parse.
     """
     try:
         from openpyxl import load_workbook
@@ -325,8 +452,18 @@ def extract_text_from_xlsx(xlsx_bytes: bytes) -> str:
         lines = []
 
         for sheet in workbook.worksheets:
-            # First, try to detect if this is an Israeli CC statement
-            # by looking for characteristic Hebrew column headers
+            # First, capture header rows that may contain charge date info
+            header_lines = []
+            for row_idx, row in enumerate(sheet.iter_rows(max_row=5, values_only=True), start=1):
+                row_values = [str(cell) if cell is not None else "" for cell in row]
+                row_text = " ".join(row_values).strip()
+                if row_text and ("עסקאות" in row_text or "חיוב" in row_text or "לתאריך" in row_text):
+                    header_lines.append(row_text)
+
+            # Add header lines to output first
+            lines.extend(header_lines)
+
+            # Now detect the data columns
             header_row = None
             charge_amount_col = None
             original_amount_col = None
@@ -387,19 +524,39 @@ def extract_text_from_xlsx(xlsx_bytes: bytes) -> str:
         return ""
 
 
-def save_transactions_to_db(transactions: list, sender_name: str) -> int:
-    """Save transactions to database and return count."""
+def save_transactions_to_db(transactions: list, sender_name: str, charge_date: str = "") -> int:
+    """Save transactions to database and return count.
+
+    Args:
+        transactions: List of parsed transactions
+        sender_name: Name of the user who uploaded the file
+        charge_date: Statement charge date in YYYY-MM-DD format (applies to all transactions)
+    """
     from datetime import date as date_type
     saved_count = 0
+
+    # Parse the statement-level charge date
+    parsed_charge_date = None
+    if charge_date:
+        try:
+            parsed_charge_date = date_type.fromisoformat(charge_date)
+        except (ValueError, TypeError):
+            pass
+
     with Session(engine) as session:
         for tx in transactions:
-            # Parse transaction_date if provided
+            # Parse transaction_date if provided (original purchase date)
             tx_date = None
             if tx.get("transaction_date"):
                 try:
                     tx_date = date_type.fromisoformat(tx["transaction_date"])
                 except (ValueError, TypeError):
                     pass  # Keep as None if parsing fails
+
+            # Parse installment info
+            installment_number = tx.get("installment_current")
+            total_installments = tx.get("installment_total")
+            original_amount = tx.get("original_amount")
 
             expense = Expense(
                 amount=tx["amount"],
@@ -408,7 +565,11 @@ def save_transactions_to_db(transactions: list, sender_name: str) -> int:
                 payer=sender_name,
                 is_fixed=False,
                 source="file",
-                transaction_date=tx_date
+                transaction_date=tx_date,
+                charge_date=parsed_charge_date,
+                original_amount=original_amount,
+                installment_number=installment_number,
+                total_installments=total_installments
             )
             session.add(expense)
             saved_count += 1
@@ -442,7 +603,7 @@ def build_import_summary(transactions: list, expected_total: float = 0.0) -> tup
     return category_summary, validation_msg, diff_pct
 
 
-async def process_bulk_text(update: Update, text: str, sender_name: str, expected_total: float = 0.0):
+async def process_bulk_text(update: Update, text: str, sender_name: str, expected_total: float = 0.0, charge_date: str = ""):
     """Process bulk transaction text. On mismatch, ask for user confirmation before saving."""
     # Check if OpenAI is configured
     if not OPENAI_API_KEY:
@@ -469,6 +630,11 @@ async def process_bulk_text(update: Update, text: str, sender_name: str, expecte
     total = sum(tx["amount"] for tx in transactions)
     category_summary, validation_msg, diff_pct = build_import_summary(transactions, expected_total)
 
+    # Add charge date info to summary if available
+    charge_date_msg = ""
+    if charge_date:
+        charge_date_msg = f"\nCharge Date: {charge_date}\n"
+
     # If mismatch (>5%), ask for confirmation before saving
     if expected_total > 0 and diff_pct > 5:
         # Store pending import
@@ -477,14 +643,15 @@ async def process_bulk_text(update: Update, text: str, sender_name: str, expecte
             "transactions": transactions,
             "sender_name": sender_name,
             "chat_id": update.effective_chat.id,
-            "expected_total": expected_total
+            "expected_total": expected_total,
+            "charge_date": charge_date
         }
 
         # Build preview message with inline keyboard
         preview_reply = (
             f"*Bulk Import Preview*\n\n"
             f"Transactions: {len(transactions)}\n"
-            f"Parsed Total: ₪{total:,.2f}\n\n"
+            f"Parsed Total: ₪{total:,.2f}{charge_date_msg}\n\n"
             f"*By Category:*\n{category_summary}"
             f"{validation_msg}\n\n"
             f"⚠️ *There is a significant mismatch!*\n"
@@ -502,12 +669,12 @@ async def process_bulk_text(update: Update, text: str, sender_name: str, expecte
         return
 
     # No mismatch or mismatch <= 5% - save directly
-    saved_count = save_transactions_to_db(transactions, sender_name)
+    saved_count = save_transactions_to_db(transactions, sender_name, charge_date)
 
     reply = (
         f"*Bulk Import Complete*\n\n"
         f"Transactions: {saved_count}\n"
-        f"Total: ₪{total:,.2f}\n\n"
+        f"Total: ₪{total:,.2f}{charge_date_msg}\n\n"
         f"*By Category:*\n{category_summary}"
         f"{validation_msg}"
     )
@@ -543,6 +710,7 @@ async def handle_import_callback(update: Update, context: ContextTypes.DEFAULT_T
     transactions = pending["transactions"]
     sender_name = pending["sender_name"]
     expected_total = pending["expected_total"]
+    charge_date = pending.get("charge_date", "")
 
     if action == "decline":
         await query.edit_message_text(
@@ -554,14 +722,15 @@ async def handle_import_callback(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     # action == "approve"
-    saved_count = save_transactions_to_db(transactions, sender_name)
+    saved_count = save_transactions_to_db(transactions, sender_name, charge_date)
     total = sum(tx["amount"] for tx in transactions)
     category_summary, validation_msg, _ = build_import_summary(transactions, expected_total)
 
+    charge_date_msg = f"\nCharge Date: {charge_date}\n" if charge_date else ""
     reply = (
         f"✅ *Bulk Import Approved & Saved*\n\n"
         f"Transactions: {saved_count}\n"
-        f"Total: ₪{total:,.2f}\n\n"
+        f"Total: ₪{total:,.2f}{charge_date_msg}\n\n"
         f"*By Category:*\n{category_summary}"
         f"{validation_msg}"
     )

@@ -442,14 +442,19 @@ def parse_bulk_transactions(text: str) -> tuple[List[dict], str]:
                         f"Merchant names like 'חברת החשמל לישראל' may appear split. Reconstruct full names.\n\n"
                         f"CRITICAL - WHICH AMOUNT TO USE:\n"
                         f"Israeli CC statements often show TWO amounts per transaction:\n"
-                        f"- 'סכום עסקה' (transaction amount) - the original/exact amount\n"
-                        f"- 'סכום חיוב' (charge amount) - the rounded amount actually charged\n\n"
-                        f"ALWAYS use 'סכום חיוב' (charge amount) - this is the SECOND amount column in CAL/Mastercard statements.\n"
+                        f"- 'סכום עסקה' (transaction amount) - the original/total purchase amount\n"
+                        f"- 'סכום חיוב' (charge amount) - the monthly amount actually charged\n\n"
+                        f"ALWAYS use 'סכום חיוב' (charge amount) as the 'amount' field - this is what gets debited monthly.\n"
                         f"Example: If you see '5.85 6.0', use 6.0 (the charge amount, NOT 5.85)\n"
                         f"Example: If you see '496.3 497.0', use 497.0 (the charge amount, NOT 496.3)\n\n"
-                        f"FOR INSTALLMENT PAYMENTS (תשלומים) in MAX statements:\n"
-                        f"- Use the smaller amount which is the monthly installment charge\n"
-                        f"- Example: '78 ₪ 780 ₪' means monthly charge is 78, use 78 NOT 780\n\n"
+                        f"INSTALLMENT PAYMENTS (תשלומים):\n"
+                        f"For installment payments, extract BOTH amounts:\n"
+                        f"- 'amount': The monthly charge (סכום חיוב) - the smaller amount\n"
+                        f"- 'original_amount': The total purchase amount (סכום עסקה מקורי) - the larger amount\n"
+                        f"Also extract installment info like 'תשלום 3 מתוך 10' or '3/10':\n"
+                        f"- 'installment_current': Current payment number (e.g., 3)\n"
+                        f"- 'installment_total': Total payments (e.g., 10)\n\n"
+                        f"Example: '78 ₪ 780 ₪ תשלום 3 מתוך 10' -> amount: 78, original_amount: 780, installment_current: 3, installment_total: 10\n\n"
                         f"RULES:\n"
                         f"1. Find ALL transaction lines with amounts (numbers like 123.45 or 123)\n"
                         f"2. Extract the full merchant/business name as description (rejoin fragmented text)\n"
@@ -463,7 +468,8 @@ def parse_bulk_transactions(text: str) -> tuple[List[dict], str]:
                         f"   - Israeli dates are typically DD/MM/YY or DD-MM-YYYY format - convert to YYYY-MM-DD\n"
                         f"   - If year is 2-digit (e.g., 26), assume 20XX (2026)\n"
                         f"   - If date is not found, use null\n\n"
-                        f"Return valid JSON: {{\"transactions\": [{{\"amount\": 123.45, \"description\": \"Store\", \"category\": \"קטגוריה\", \"date\": \"2026-01-15\"}}]}}"
+                        f"Return valid JSON: {{\"transactions\": [{{\"amount\": 78.0, \"original_amount\": 780.0, \"description\": \"Store\", \"category\": \"קטגוריה\", \"date\": \"2026-01-15\", \"installment_current\": 3, \"installment_total\": 10}}]}}\n"
+                        f"Note: original_amount, installment_current, and installment_total are optional - only include for installment payments."
                     )
                 },
                 {
@@ -512,6 +518,11 @@ def parse_bulk_transactions(text: str) -> tuple[List[dict], str]:
                 llm_cat_name = tx.get("category", fallback_name)
                 tx_date = tx.get("date")  # YYYY-MM-DD format or null
 
+                # Installment payment fields (optional)
+                original_amount = tx.get("original_amount")
+                installment_current = tx.get("installment_current")
+                installment_total = tx.get("installment_total")
+
                 if amount is None or not isinstance(amount, (int, float)):
                     continue
 
@@ -530,13 +541,23 @@ def parse_bulk_transactions(text: str) -> tuple[List[dict], str]:
                         cat_name = fallback_name
                         cat_id = fallback_id
 
-                parsed.append({
+                tx_data = {
                     "amount": float(amount),
                     "description": str(desc),
                     "category_id": cat_id,
                     "category_name": cat_name,
                     "transaction_date": tx_date  # Can be None or YYYY-MM-DD string
-                })
+                }
+
+                # Add installment info if present
+                if original_amount is not None and isinstance(original_amount, (int, float)):
+                    tx_data["original_amount"] = float(original_amount)
+                if installment_current is not None and isinstance(installment_current, int):
+                    tx_data["installment_current"] = installment_current
+                if installment_total is not None and isinstance(installment_total, int):
+                    tx_data["installment_total"] = installment_total
+
+                parsed.append(tx_data)
 
         if learned_matches > 0:
             logger.info(f"Applied learned keyword mappings to {learned_matches}/{len(parsed)} transactions")

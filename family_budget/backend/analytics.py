@@ -5,9 +5,38 @@ from backend.database import engine, Expense, Income, Investment, Category, Recu
 
 
 def get_expense_effective_date(exp: Expense) -> date:
-    """Get the effective date for an expense - transaction_date if available, else created_at date."""
+    """Get the effective date for an expense (for monthly grouping).
+
+    Priority order:
+    1. charge_date - when the money was actually debited (best for monthly grouping)
+    2. transaction_date - original purchase date (fallback)
+    3. created_at date - when record was created (last resort)
+
+    For installment payments, charge_date is critical as it determines
+    which month the expense belongs to.
+    """
+    if exp.charge_date:
+        return exp.charge_date
     if exp.transaction_date:
         return exp.transaction_date
+    return exp.created_at.date()
+
+
+def get_expense_transaction_date(exp: Expense) -> date:
+    """Get the actual transaction date (when purchase happened).
+
+    Priority order:
+    1. transaction_date - when the purchase actually occurred
+    2. charge_date - fallback if no transaction date
+    3. created_at date - last resort
+
+    Use this for analytics about shopping behavior (day of week patterns, etc.)
+    where the actual purchase date is more meaningful than billing date.
+    """
+    if exp.transaction_date:
+        return exp.transaction_date
+    if exp.charge_date:
+        return exp.charge_date
     return exp.created_at.date()
 
 
@@ -146,7 +175,7 @@ def get_recent_expenses(limit: int = 10) -> List[Dict[str, Any]]:
         result = []
         for exp in expenses:
             cat = session.get(Category, exp.category_id)
-            result.append({
+            expense_data = {
                 "id": exp.id,
                 "amount": exp.amount,
                 "description": exp.description,
@@ -154,8 +183,20 @@ def get_recent_expenses(limit: int = 10) -> List[Dict[str, Any]]:
                 "payer": exp.payer,
                 "created_at": exp.created_at.isoformat(),
                 "is_fixed": exp.is_fixed,
-                "source": exp.source
-            })
+                "source": exp.source,
+                "transaction_date": exp.transaction_date.isoformat() if exp.transaction_date else None,
+                "charge_date": exp.charge_date.isoformat() if exp.charge_date else None
+            }
+
+            # Add installment info if present
+            if exp.original_amount is not None:
+                expense_data["original_amount"] = exp.original_amount
+            if exp.installment_number is not None:
+                expense_data["installment_number"] = exp.installment_number
+            if exp.total_installments is not None:
+                expense_data["total_installments"] = exp.total_installments
+
+            result.append(expense_data)
         return result
 
 
@@ -191,6 +232,7 @@ def calculate_advanced_analytics(year: int, month: int) -> Dict[str, Any]:
             }
 
         # 1. Find potential duplicates (same amount + similar description on same day)
+        # Uses transaction_date since duplicates are about the same purchase being recorded twice
         potential_duplicates = []
         seen_pairs = set()
 
@@ -203,9 +245,9 @@ def calculate_advanced_analytics(year: int, month: int) -> Dict[str, Any]:
 
                 # Check if same amount
                 if abs(exp1.amount - exp2.amount) < 0.01:
-                    # Check if same day (use effective date)
-                    date1 = get_expense_effective_date(exp1)
-                    date2 = get_expense_effective_date(exp2)
+                    # Check if same day (use transaction_date - when purchase happened)
+                    date1 = get_expense_transaction_date(exp1)
+                    date2 = get_expense_transaction_date(exp2)
                     day_diff = abs((date1 - date2).days)
                     if day_diff == 0:
                         # Check description similarity (simple: same first 5 chars or contains same word)
@@ -261,7 +303,8 @@ def calculate_advanced_analytics(year: int, month: int) -> Dict[str, Any]:
             reverse=True
         )[:10]
 
-        # 3. Spending by day of week (using effective date)
+        # 3. Spending by day of week (using transaction_date - when purchase actually happened)
+        # This reflects actual shopping behavior, not billing dates
         day_names_hebrew = {
             0: "שני", 1: "שלישי", 2: "רביעי",
             3: "חמישי", 4: "שישי", 5: "שבת", 6: "ראשון"
@@ -270,8 +313,9 @@ def calculate_advanced_analytics(year: int, month: int) -> Dict[str, Any]:
         count_by_dow = defaultdict(int)
 
         for exp in month_expenses:
-            effective_date = get_expense_effective_date(exp)
-            dow = effective_date.weekday()
+            # Use transaction_date for day-of-week patterns (actual purchase behavior)
+            tx_date = get_expense_transaction_date(exp)
+            dow = tx_date.weekday()
             spending_by_dow[dow] += exp.amount
             count_by_dow[dow] += 1
 
@@ -286,8 +330,8 @@ def calculate_advanced_analytics(year: int, month: int) -> Dict[str, Any]:
             for i in range(7)
         ]
 
-        # 4. Daily average spending (using effective date)
-        unique_days = len(set(get_expense_effective_date(exp) for exp in month_expenses))
+        # 4. Daily average spending (using transaction_date - actual shopping days)
+        unique_days = len(set(get_expense_transaction_date(exp) for exp in month_expenses))
         total_spent = sum(exp.amount for exp in month_expenses)
         daily_average = total_spent / unique_days if unique_days > 0 else 0
 

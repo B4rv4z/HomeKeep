@@ -39,9 +39,14 @@ class Expense(SQLModel, table=True):
     category_id: int = Field(foreign_key="categories.id", index=True)
     payer: Optional[str] = Field(default="Unknown")
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
-    transaction_date: Optional[date] = Field(default=None, index=True)  # Actual transaction date from statement
+    transaction_date: Optional[date] = Field(default=None, index=True)  # Original purchase date from statement
+    charge_date: Optional[date] = Field(default=None, index=True)  # Statement charge date (when money is debited)
     is_fixed: bool = Field(default=False)
     source: str = Field(default="manual")  # 'manual' or 'file'
+    # Installment tracking
+    original_amount: Optional[float] = Field(default=None)  # Full purchase amount for installments
+    installment_number: Optional[int] = Field(default=None)  # Current payment (e.g., 3 in "3 of 10")
+    total_installments: Optional[int] = Field(default=None)  # Total payments (e.g., 10 in "3 of 10")
 
 
 class Income(SQLModel, table=True):
@@ -95,7 +100,7 @@ def migrate_db():
     from sqlalchemy import text
 
     with engine.connect() as conn:
-        # Check if expenses table exists and if transaction_date column exists
+        # Check if expenses table exists and migrate columns
         try:
             # Get columns in expenses table
             result = conn.execute(text("PRAGMA table_info(expenses)"))
@@ -106,6 +111,29 @@ def migrate_db():
                 conn.execute(text("ALTER TABLE expenses ADD COLUMN transaction_date DATE"))
                 conn.commit()
                 print("Migration: Added transaction_date column to expenses table")
+
+            # Add charge_date column if it doesn't exist
+            if 'charge_date' not in columns:
+                conn.execute(text("ALTER TABLE expenses ADD COLUMN charge_date DATE"))
+                conn.commit()
+                print("Migration: Added charge_date column to expenses table")
+
+            # Add installment tracking columns
+            if 'original_amount' not in columns:
+                conn.execute(text("ALTER TABLE expenses ADD COLUMN original_amount FLOAT"))
+                conn.commit()
+                print("Migration: Added original_amount column to expenses table")
+
+            if 'installment_number' not in columns:
+                conn.execute(text("ALTER TABLE expenses ADD COLUMN installment_number INTEGER"))
+                conn.commit()
+                print("Migration: Added installment_number column to expenses table")
+
+            if 'total_installments' not in columns:
+                conn.execute(text("ALTER TABLE expenses ADD COLUMN total_installments INTEGER"))
+                conn.commit()
+                print("Migration: Added total_installments column to expenses table")
+
         except Exception as e:
             # Table might not exist yet, which is fine
             print(f"Migration check skipped: {e}")
