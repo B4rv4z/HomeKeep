@@ -23,10 +23,10 @@
         <p class="text-xs text-slate-400">Local-First • Home Assistant Add-on</p>
       </div>
       <div class="flex items-center gap-3">
-        <button onclick="changeDashboardMonth(-1)" class="bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded text-sm">◀</button>
+        <button onclick="changeDashboardMonth(1)" class="bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded text-sm">◀</button>
         <select id="dashboard-month-select" onchange="loadDashboardByMonth()" class="bg-slate-800 border border-slate-700 px-3 py-1.5 rounded-lg text-sm font-semibold text-slate-100">
         </select>
-        <button onclick="changeDashboardMonth(1)" class="bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded text-sm">▶</button>
+        <button onclick="changeDashboardMonth(-1)" class="bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded text-sm">▶</button>
       </div>
     </header>
 
@@ -185,10 +185,10 @@
         <div class="flex items-center justify-between flex-wrap gap-4">
           <h3 class="text-sm font-bold text-slate-300">בחר חודש לצפייה</h3>
           <div class="flex items-center gap-2">
-            <button onclick="changeExpenseMonth(-1)" class="bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded text-sm">◀</button>
+            <button onclick="changeExpenseMonth(1)" class="bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded text-sm">◀</button>
             <select id="expense-month-select" onchange="loadExpensesByMonth()" class="bg-slate-900 border border-slate-700 p-2 rounded text-slate-100 text-sm">
             </select>
-            <button onclick="changeExpenseMonth(1)" class="bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded text-sm">▶</button>
+            <button onclick="changeExpenseMonth(-1)" class="bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded text-sm">▶</button>
           </div>
           <div class="flex items-center gap-4">
             <div class="text-sm">
@@ -287,28 +287,30 @@
         <div id="top-merchants-list" class="space-y-2"></div>
       </div>
 
-      <!-- Two Column Layout: Day of Week + Size Distribution -->
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-        <!-- Spending by Day of Week -->
-        <div class="bg-slate-800/60 p-5 rounded-xl border border-slate-700">
-          <h4 class="text-sm font-semibold mb-4 text-slate-300">📅 הוצאות לפי יום בשבוע</h4>
-          <div class="h-48">
-            <canvas id="dayOfWeekChart"></canvas>
-          </div>
-        </div>
-
-        <!-- Expense Size Distribution -->
-        <div class="bg-slate-800/60 p-5 rounded-xl border border-slate-700">
-          <h4 class="text-sm font-semibold mb-4 text-slate-300">📊 התפלגות גודל הוצאות</h4>
-          <div class="h-48">
-            <canvas id="sizeDistributionChart"></canvas>
-          </div>
+      <!-- Spending by Day of Week -->
+      <div class="bg-slate-800/60 p-5 rounded-xl border border-slate-700 mb-6">
+        <h4 class="text-sm font-semibold mb-4 text-slate-300">📅 הוצאות לפי יום בשבוע</h4>
+        <div class="h-48">
+          <canvas id="dayOfWeekChart"></canvas>
         </div>
       </div>
 
       <hr class="border-slate-700 my-8" />
 
       <h3 class="text-lg font-bold text-slate-200 mb-4">השוואה חודשית</h3>
+
+      <!-- Monthly Comparison Table -->
+      <div class="bg-slate-800/40 rounded-xl border border-slate-700 overflow-x-auto mb-6">
+        <table class="w-full text-xs">
+          <thead class="bg-slate-800">
+            <tr id="comparison-table-header">
+              <th class="text-right p-3 text-slate-400 sticky right-0 bg-slate-800">קטגוריה</th>
+            </tr>
+          </thead>
+          <tbody id="comparison-table-body" class="divide-y divide-slate-700/50">
+          </tbody>
+        </table>
+      </div>
 
       <!-- Comparison Chart -->
       <div class="bg-slate-800/60 p-5 rounded-xl border border-slate-700 mb-6">
@@ -324,19 +326,6 @@
         <div class="h-64">
           <canvas id="categoryTrendChart"></canvas>
         </div>
-      </div>
-
-      <!-- Monthly Comparison Table -->
-      <div class="bg-slate-800/40 rounded-xl border border-slate-700 overflow-x-auto">
-        <table class="w-full text-xs">
-          <thead class="bg-slate-800">
-            <tr id="comparison-table-header">
-              <th class="text-right p-3 text-slate-400 sticky right-0 bg-slate-800">קטגוריה</th>
-            </tr>
-          </thead>
-          <tbody id="comparison-table-body" class="divide-y divide-slate-700/50">
-          </tbody>
-        </table>
       </div>
     </div>
 
@@ -410,7 +399,7 @@
 
     <!-- Footer -->
     <footer class="mt-8 pt-4 border-t border-slate-800 text-center text-xs text-slate-500">
-      Family Budget Tracker v1.5.3 • Local-First • Zero Cloud Leakage
+      Family Budget Tracker v1.5.4 • Local-First • Zero Cloud Leakage
     </footer>
   </div>
 

@@ -450,12 +450,13 @@ async def get_monthly_comparison(
         target_date = now - relativedelta(months=i)
         year, month = target_date.year, target_date.month
 
-        # Get expenses for this month
+        # Get expenses for this month (using transaction_date if available)
         all_expenses = db.exec(select(Expense)).all()
-        month_expenses = [
-            exp for exp in all_expenses
-            if exp.created_at.year == year and exp.created_at.month == month
-        ]
+        month_expenses = []
+        for exp in all_expenses:
+            effective_date = get_expense_effective_date(exp)
+            if effective_date.year == year and effective_date.month == month:
+                month_expenses.append(exp)
 
         # Get recurring expenses
         all_recurring = db.exec(

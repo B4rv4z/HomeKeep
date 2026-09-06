@@ -4,7 +4,6 @@ let chartInstance = null;
 let comparisonChartInstance = null;
 let categoryTrendChartInstance = null;
 let dayOfWeekChartInstance = null;
-let sizeDistributionChartInstance = null;
 let categories = [];
 let currentExpenses = [];
 let selectedExpenseMonth = null;
@@ -691,7 +690,6 @@ function renderAdvancedAnalytics(data) {
 
   // Render charts
   renderDayOfWeekChart(data.spending_by_day_of_week);
-  renderSizeDistributionChart(data.expense_size_distribution);
 }
 
 function renderDuplicates(duplicates) {
@@ -803,42 +801,6 @@ function renderDayOfWeekChart(dayData) {
       scales: {
         x: { ticks: { color: '#94a3b8' }, grid: { display: false } },
         y: { ticks: { color: '#94a3b8', callback: (v) => `₪${v.toLocaleString()}` }, grid: { color: '#334155' } }
-      }
-    }
-  });
-}
-
-function renderSizeDistributionChart(sizeData) {
-  const ctx = document.getElementById("sizeDistributionChart").getContext("2d");
-  if (sizeDistributionChartInstance) sizeDistributionChartInstance.destroy();
-
-  const labels = Object.keys(sizeData);
-  const values = Object.values(sizeData);
-  const colors = ['#10b981', '#38bdf8', '#f59e0b', '#ec4899', '#f43f5e'];
-
-  sizeDistributionChartInstance = new Chart(ctx, {
-    type: "doughnut",
-    data: {
-      labels: labels,
-      datasets: [{
-        data: values,
-        backgroundColor: colors,
-        borderWidth: 0
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: {
-          position: 'right',
-          labels: { color: '#94a3b8', font: { size: 10 }, padding: 8 }
-        },
-        tooltip: {
-          callbacks: {
-            label: (ctx) => `${ctx.label}: ${ctx.parsed} עסקאות`
-          }
-        }
       }
     }
   });
