@@ -9,6 +9,7 @@ let categories = [];
 let currentExpenses = [];
 let selectedExpenseMonth = null;
 let selectedReportsMonth = null;
+let selectedDashboardMonth = null;
 
 // ============ API Helpers ============
 
@@ -81,10 +82,48 @@ function switchTab(tabName) {
 
 // ============ Dashboard Tab ============
 
+function initDashboardMonthSelector() {
+  const select = document.getElementById("dashboard-month-select");
+  if (select.options.length === 0) {
+    const now = new Date();
+    for (let i = 0; i < 12; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const option = document.createElement("option");
+      option.value = `${d.getFullYear()}-${d.getMonth() + 1}`;
+      option.textContent = d.toLocaleDateString('he-IL', { year: 'numeric', month: 'long' });
+      select.appendChild(option);
+    }
+  }
+  if (!selectedDashboardMonth) {
+    selectedDashboardMonth = select.value;
+  }
+  select.value = selectedDashboardMonth;
+}
+
+function changeDashboardMonth(delta) {
+  const select = document.getElementById("dashboard-month-select");
+  const newIndex = select.selectedIndex + delta;
+  if (newIndex >= 0 && newIndex < select.options.length) {
+    select.selectedIndex = newIndex;
+    loadDashboardByMonth();
+  }
+}
+
+async function loadDashboardByMonth() {
+  const select = document.getElementById("dashboard-month-select");
+  selectedDashboardMonth = select.value;
+  await fetchDashboard();
+}
+
 async function fetchDashboard() {
   try {
-    const data = await apiGet("/api/analytics/monthly");
-    document.getElementById("current-period").textContent = data.period;
+    // Build URL with selected month
+    let url = "/api/analytics/monthly";
+    if (selectedDashboardMonth) {
+      const [year, month] = selectedDashboardMonth.split('-').map(Number);
+      url += `?year=${year}&month=${month}`;
+    }
+    const data = await apiGet(url);
     document.getElementById("stat-income").textContent = `₪${data.totals.income.toLocaleString()}`;
     document.getElementById("stat-spent").textContent = `₪${data.totals.spent.toLocaleString()}`;
     document.getElementById("stat-invested").textContent = `₪${data.totals.invested.toLocaleString()}`;
@@ -1103,6 +1142,7 @@ function setupKeywordForm() {
 
 document.addEventListener("DOMContentLoaded", async () => {
   await loadCategories();
+  initDashboardMonthSelector();
   await fetchDashboard();
   await fetchRecurringExpenses();
   setupFormHandlers();

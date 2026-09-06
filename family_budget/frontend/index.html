@@ -23,7 +23,10 @@
         <p class="text-xs text-slate-400">Local-First • Home Assistant Add-on</p>
       </div>
       <div class="flex items-center gap-3">
-        <div id="current-period" class="text-sm font-semibold bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-700"></div>
+        <button onclick="changeDashboardMonth(-1)" class="bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded text-sm">◀</button>
+        <select id="dashboard-month-select" onchange="loadDashboardByMonth()" class="bg-slate-800 border border-slate-700 px-3 py-1.5 rounded-lg text-sm font-semibold text-slate-100">
+        </select>
+        <button onclick="changeDashboardMonth(1)" class="bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded text-sm">▶</button>
       </div>
     </header>
 
@@ -407,7 +410,7 @@
 
     <!-- Footer -->
     <footer class="mt-8 pt-4 border-t border-slate-800 text-center text-xs text-slate-500">
-      Family Budget Tracker v1.5.1 • Local-First • Zero Cloud Leakage
+      Family Budget Tracker v1.5.2 • Local-First • Zero Cloud Leakage
     </footer>
   </div>
 
