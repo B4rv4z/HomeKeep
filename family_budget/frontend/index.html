@@ -44,6 +44,9 @@
       <button onclick="switchTab('settings')" class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent hover:text-emerald-400 transition" data-tab="settings">
         הגדרות
       </button>
+      <button onclick="switchTab('logs')" class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent hover:text-emerald-400 transition" data-tab="logs">
+        לוג פעילות
+      </button>
     </nav>
 
     <!-- ==================== DASHBOARD TAB ==================== -->
@@ -378,9 +381,58 @@
       </div>
     </div>
 
+    <!-- ==================== LOGS TAB ==================== -->
+    <div id="tab-logs" class="tab-content mt-6">
+      <div class="flex justify-between items-center mb-6">
+        <h3 class="text-lg font-bold text-slate-200">לוג פעילות</h3>
+        <button onclick="clearActivityLogs()" class="bg-rose-600/80 hover:bg-rose-600 text-white text-xs px-3 py-1.5 rounded transition">
+          נקה לוג
+        </button>
+      </div>
+
+      <!-- Log Stats -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div class="bg-slate-800/80 p-4 rounded-xl border border-slate-700">
+          <div class="text-xs text-slate-400">סה"כ רשומות</div>
+          <div id="log-stat-total" class="text-xl font-bold text-sky-400 mt-1">0</div>
+        </div>
+        <div class="bg-slate-800/80 p-4 rounded-xl border border-slate-700">
+          <div class="text-xs text-slate-400">ייבוא קבצים</div>
+          <div id="log-stat-imports" class="text-xl font-bold text-emerald-400 mt-1">0</div>
+        </div>
+        <div class="bg-slate-800/80 p-4 rounded-xl border border-slate-700">
+          <div class="text-xs text-slate-400">מטלגרם</div>
+          <div id="log-stat-telegram" class="text-xl font-bold text-purple-400 mt-1">0</div>
+        </div>
+        <div class="bg-slate-800/80 p-4 rounded-xl border border-slate-700">
+          <div class="text-xs text-slate-400">ידני מהדשבורד</div>
+          <div id="log-stat-manual" class="text-xl font-bold text-amber-400 mt-1">0</div>
+        </div>
+      </div>
+
+      <!-- Log Table -->
+      <div class="bg-slate-800/40 rounded-xl border border-slate-700 overflow-hidden">
+        <table class="w-full text-xs">
+          <thead class="bg-slate-800">
+            <tr>
+              <th class="text-right p-3 text-slate-400">תאריך ושעה</th>
+              <th class="text-right p-3 text-slate-400">פעולה</th>
+              <th class="text-right p-3 text-slate-400">מקור</th>
+              <th class="text-right p-3 text-slate-400">פרטים</th>
+              <th class="text-right p-3 text-slate-400">כמות רשומות</th>
+              <th class="text-right p-3 text-slate-400">סכום</th>
+            </tr>
+          </thead>
+          <tbody id="logs-table-body" class="divide-y divide-slate-700/50">
+          </tbody>
+        </table>
+      </div>
+      <div id="logs-pagination" class="mt-4 text-center text-xs text-slate-400"></div>
+    </div>
+
     <!-- Footer -->
     <footer class="mt-8 pt-4 border-t border-slate-800 text-center text-xs text-slate-500">
-      Family Budget Tracker v1.5.5 • Local-First • Zero Cloud Leakage
+      Family Budget Tracker v1.5.6 • Local-First • Zero Cloud Leakage
     </footer>
   </div>
 

@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from backend.database import init_db, get_session, Expense, Income, Investment, Category, Member, RecurringExpense, KeywordMapping
+from backend.database import init_db, get_session, Expense, Income, Investment, Category, Member, RecurringExpense, KeywordMapping, ActivityLog
 from backend.bot import run_bot_in_thread
 from backend.analytics import calculate_monthly_analytics, get_recent_expenses, calculate_advanced_analytics
 from backend.parser import learn_category_from_correction, get_category_by_keywords
@@ -127,6 +127,17 @@ async def create_expense(expense: ExpenseCreate, db: Session = Depends(get_sessi
     db.add(new_expense)
     db.commit()
     db.refresh(new_expense)
+
+    # Log the activity
+    cat = db.get(Category, expense.category_id)
+    log_activity(
+        db,
+        action="expense_added",
+        source=expense.source,
+        details=f"{expense.description} - ₪{expense.amount} ({cat.name if cat else 'Unknown'})",
+        total_amount=expense.amount
+    )
+
     return new_expense
 
 
@@ -771,3 +782,64 @@ async def delete_all_keyword_mappings(db: Session = Depends(get_session)):
         db.delete(mapping)
     db.commit()
     return {"status": "deleted", "count": count}
+
+
+# ============ Activity Log Endpoints ============
+
+def log_activity(
+    db: Session,
+    action: str,
+    source: str,
+    details: str = "",
+    record_count: int = None,
+    file_date: str = None,
+    total_amount: float = None
+):
+    """Helper function to log an activity."""
+    import json
+    from datetime import date as date_type
+
+    log_entry = ActivityLog(
+        action=action,
+        source=source,
+        details=details if isinstance(details, str) else json.dumps(details, ensure_ascii=False),
+        record_count=record_count,
+        file_date=date_type.fromisoformat(file_date) if file_date else None,
+        total_amount=total_amount
+    )
+    db.add(log_entry)
+    db.commit()
+    return log_entry
+
+
+@app.get("/api/logs")
+async def get_activity_logs(
+    limit: int = Query(default=100, le=500),
+    db: Session = Depends(get_session)
+):
+    """Get recent activity logs."""
+    logs = db.exec(
+        select(ActivityLog).order_by(ActivityLog.timestamp.desc()).limit(limit)
+    ).all()
+
+    return [{
+        "id": log.id,
+        "timestamp": log.timestamp.isoformat(),
+        "action": log.action,
+        "source": log.source,
+        "details": log.details,
+        "record_count": log.record_count,
+        "file_date": log.file_date.isoformat() if log.file_date else None,
+        "total_amount": log.total_amount
+    } for log in logs]
+
+
+@app.delete("/api/logs/clear")
+async def clear_activity_logs(db: Session = Depends(get_session)):
+    """Clear all activity logs."""
+    logs = db.exec(select(ActivityLog)).all()
+    count = len(logs)
+    for log in logs:
+        db.delete(log)
+    db.commit()
+    return {"status": "cleared", "count": count}

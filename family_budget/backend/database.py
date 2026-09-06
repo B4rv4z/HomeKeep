@@ -77,6 +77,19 @@ class RecurringExpense(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class ActivityLog(SQLModel, table=True):
+    """Activity log for tracking all system operations."""
+    __tablename__ = "activity_logs"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    timestamp: datetime = Field(default_factory=datetime.utcnow, index=True)
+    action: str = Field(index=True)  # 'expense_added', 'file_import', 'expense_deleted', etc.
+    source: str = Field(index=True)  # 'telegram', 'dashboard', 'file'
+    details: str = Field(default="")  # JSON string with additional details
+    record_count: Optional[int] = Field(default=None)  # For file imports
+    file_date: Optional[date] = Field(default=None)  # Upload date for file imports
+    total_amount: Optional[float] = Field(default=None)  # Sum of amounts for imports
+
+
 def migrate_db():
     """Run any necessary database migrations for existing databases."""
     from sqlalchemy import text

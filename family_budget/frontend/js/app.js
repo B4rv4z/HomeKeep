@@ -74,6 +74,8 @@ function switchTab(tabName) {
     loadReportsTab();
   } else if (tabName === 'settings') {
     loadSettingsTab();
+  } else if (tabName === 'logs') {
+    loadLogsTab();
   }
 }
 
@@ -1065,6 +1067,95 @@ function setupKeywordForm() {
       alert("שגיאה בהוספת מילת מפתח");
     }
   });
+}
+
+// ============ Logs Tab ============
+
+async function loadLogsTab() {
+  try {
+    const logs = await apiGet("/api/logs?limit=200");
+    renderLogsTable(logs);
+    updateLogStats(logs);
+  } catch (error) {
+    console.error("Failed to load logs:", error);
+  }
+}
+
+function updateLogStats(logs) {
+  document.getElementById("log-stat-total").textContent = logs.length;
+  document.getElementById("log-stat-imports").textContent = logs.filter(l => l.action === "file_import").length;
+  document.getElementById("log-stat-telegram").textContent = logs.filter(l => l.source === "telegram").length;
+  document.getElementById("log-stat-manual").textContent = logs.filter(l => l.source === "manual" || l.source === "dashboard").length;
+}
+
+function renderLogsTable(logs) {
+  const tbody = document.getElementById("logs-table-body");
+  tbody.innerHTML = "";
+
+  if (logs.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" class="text-center p-4 text-slate-500">אין רשומות בלוג</td></tr>';
+    return;
+  }
+
+  const actionLabels = {
+    "expense_added": "הוספת הוצאה",
+    "file_import": "ייבוא קובץ",
+    "expense_deleted": "מחיקת הוצאה",
+    "category_changed": "שינוי קטגוריה",
+    "bulk_delete": "מחיקה מרובה"
+  };
+
+  const sourceLabels = {
+    "telegram": "טלגרם",
+    "dashboard": "דשבורד",
+    "manual": "ידני",
+    "file": "קובץ"
+  };
+
+  const sourceColors = {
+    "telegram": "bg-purple-900/50 text-purple-400",
+    "dashboard": "bg-amber-900/50 text-amber-400",
+    "manual": "bg-amber-900/50 text-amber-400",
+    "file": "bg-emerald-900/50 text-emerald-400"
+  };
+
+  logs.forEach(log => {
+    const date = new Date(log.timestamp);
+    const dateStr = date.toLocaleDateString("he-IL");
+    const timeStr = date.toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit" });
+    const actionLabel = actionLabels[log.action] || log.action;
+    const sourceLabel = sourceLabels[log.source] || log.source;
+    const sourceColor = sourceColors[log.source] || "bg-slate-700 text-slate-400";
+
+    const tr = document.createElement("tr");
+    tr.className = "hover:bg-slate-800/50";
+    tr.innerHTML = `
+      <td class="p-3 text-slate-300">${dateStr} ${timeStr}</td>
+      <td class="p-3 text-slate-200 font-medium">${actionLabel}</td>
+      <td class="p-3">
+        <span class="text-xs px-2 py-1 rounded ${sourceColor}">${sourceLabel}</span>
+      </td>
+      <td class="p-3 text-slate-400 max-w-xs truncate" title="${log.details}">${log.details || '-'}</td>
+      <td class="p-3 text-slate-300 text-center">${log.record_count !== null ? log.record_count : '-'}</td>
+      <td class="p-3 text-emerald-400 font-medium">${log.total_amount !== null ? '₪' + log.total_amount.toLocaleString() : '-'}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  document.getElementById("logs-pagination").textContent = `מציג ${logs.length} רשומות`;
+}
+
+async function clearActivityLogs() {
+  if (!confirm("האם אתה בטוח שברצונך למחוק את כל הלוג?\n\nפעולה זו בלתי הפיכה!")) {
+    return;
+  }
+  try {
+    const result = await apiDelete("/api/logs/clear");
+    alert(`נמחקו ${result.count} רשומות`);
+    await loadLogsTab();
+  } catch (error) {
+    alert("שגיאה במחיקת הלוג");
+  }
 }
 
 // ============ Initialize ============
