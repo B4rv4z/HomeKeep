@@ -190,6 +190,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             # TXT or CSV - decode as text
             text = file_bytes.decode("utf-8", errors="ignore")
+            # Normalize Hebrew text (remove gershayim, merge fragments)
+            text = normalize_hebrew_text(text)
 
         if not text.strip():
             await update.message.reply_text("Could not extract text from the file.")
@@ -213,27 +215,34 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Error processing file: {str(e)}")
 
 
-def fix_fragmented_hebrew(text: str) -> str:
+def normalize_hebrew_text(text: str) -> str:
     """
-    Fix fragmented Hebrew text by merging isolated letters that were split during PDF extraction.
+    Normalize Hebrew text from any source (PDF, XLSX, TXT, etc.).
 
-    Hebrew abbreviations (like פ״ת, בע״מ) often get fragmented during PDF extraction,
-    appearing as "פ ת" or "בע מ". Instead of trying to reconstruct the gershayim character,
-    we simply merge the fragments: "בנה פ" -> "בנהפ", "פ ת" -> "פת".
-
-    Only merges when the single letter is truly isolated at word end (followed by non-Hebrew).
+    1. Remove gershayim (״) and geresh (׳) characters that cause fragmentation
+    2. Merge isolated single Hebrew letters back to preceding Hebrew word
     """
     import re
 
-    # Hebrew letter range (aleph to tav)
+    # Step 1: Remove Hebrew quotation marks (these cause word splits in PDF extraction)
+    text = text.replace('״', '')  # Gershayim (U+05F4)
+    text = text.replace('׳', '')  # Geresh (U+05F3)
+
+    # Step 2: Merge isolated single Hebrew letter back to preceding Hebrew word
+    # Pattern: Short Hebrew word (1-3 letters) + space + single Hebrew letter
+    # Only merge when followed by non-Hebrew (excluding space) or end of string
+    # This prevents merging "העברה ב BIT" while still merging "בנה פ" -> "בנהפ"
     heb = r'[\u05D0-\u05EA]'
 
-    # Pattern: Short standalone Hebrew word (2-3 letters) at word boundary,
-    # followed by space + single letter at word end (before non-Hebrew or end)
-    # Uses word boundary \\b to ensure we're at a word start
-    # "בנה פ" -> "בנהפ", "בע מ" -> "בעמ", "פ ת" -> "פת"
-    pattern = rf'\b({heb}{{1,3}})\s+({heb})(?=[^{heb[1:-1]}]|$)'
-    text = re.sub(pattern, r'\1\2', text)
+    # Match: 1-3 Hebrew letters + space + single Hebrew letter + (non-Hebrew non-space OR end)
+    # The key is requiring non-space non-Hebrew after the single letter
+    pattern = rf'({heb}{{1,3}})\s+({heb})(?=[^\u05D0-\u05EA\s]|$)'
+
+    # Apply repeatedly to handle chains like "א ב ג" -> "אבג"
+    prev_text = None
+    while prev_text != text:
+        prev_text = text
+        text = re.sub(pattern, r'\1\2', text)
 
     return text
 
@@ -251,8 +260,8 @@ def extract_text_from_pdf(pdf_bytes: bytes) -> str:
             # sort=True improves RTL (Hebrew) text extraction
             text += page.get_text("text", sort=True) + "\n"
         doc.close()
-        # Fix fragmented Hebrew text
-        text = fix_fragmented_hebrew(text)
+        # Normalize Hebrew text (remove gershayim, merge fragments)
+        text = normalize_hebrew_text(text)
         return text
     except ImportError:
         # Try legacy import for older versions
@@ -263,7 +272,7 @@ def extract_text_from_pdf(pdf_bytes: bytes) -> str:
             for page in doc:
                 text += page.get_text("text", sort=True) + "\n"
             doc.close()
-            text = fix_fragmented_hebrew(text)
+            text = normalize_hebrew_text(text)
             return text
         except ImportError:
             logger.warning("PyMuPDF not installed - PDF parsing unavailable")
@@ -607,7 +616,10 @@ def extract_text_from_xlsx(xlsx_bytes: bytes) -> str:
                 continue
             cleaned_lines.append(line)
 
-        return "\n".join(cleaned_lines)
+        text = "\n".join(cleaned_lines)
+        # Normalize Hebrew text (remove gershayim, merge fragments)
+        text = normalize_hebrew_text(text)
+        return text
     except ImportError:
         logger.warning("openpyxl not installed - XLSX parsing unavailable")
         return ""
