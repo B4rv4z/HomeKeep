@@ -9,9 +9,10 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from backend.database import init_db, get_session, Expense, Income, Investment, Category, Member, RecurringExpense
+from backend.database import init_db, get_session, Expense, Income, Investment, Category, Member, RecurringExpense, KeywordMapping
 from backend.bot import run_bot_in_thread
-from backend.analytics import calculate_monthly_analytics, get_recent_expenses
+from backend.analytics import calculate_monthly_analytics, get_recent_expenses, calculate_advanced_analytics
+from backend.parser import learn_category_from_correction, get_category_by_keywords
 
 # Configure logging
 logging.basicConfig(
@@ -29,6 +30,7 @@ class ExpenseCreate(BaseModel):
     payer: Optional[str] = "Dashboard"
     is_fixed: bool = False
     source: str = "manual"  # 'manual' or 'file'
+    transaction_date: Optional[str] = None  # ISO format: YYYY-MM-DD
 
 
 class IncomeCreate(BaseModel):
@@ -103,13 +105,24 @@ async def get_expenses(
 @app.post("/api/expenses")
 async def create_expense(expense: ExpenseCreate, db: Session = Depends(get_session)):
     """Create a new expense entry."""
+    from datetime import date as date_type
+
+    # Parse transaction_date if provided
+    tx_date = None
+    if expense.transaction_date:
+        try:
+            tx_date = date_type.fromisoformat(expense.transaction_date)
+        except ValueError:
+            pass  # Keep as None if parsing fails
+
     new_expense = Expense(
         amount=expense.amount,
         description=expense.description,
         category_id=expense.category_id,
         payer=expense.payer,
         is_fixed=expense.is_fixed,
-        source=expense.source
+        source=expense.source,
+        transaction_date=tx_date
     )
     db.add(new_expense)
     db.commit()
@@ -162,6 +175,7 @@ class ExpenseUpdate(BaseModel):
     category_id: Optional[int] = None
     description: Optional[str] = None
     amount: Optional[float] = None
+    transaction_date: Optional[str] = None  # ISO format: YYYY-MM-DD
 
 
 @app.patch("/api/expenses/{expense_id}")
@@ -170,33 +184,67 @@ async def update_expense(
     updates: ExpenseUpdate,
     db: Session = Depends(get_session)
 ):
-    """Update an expense (category, description, or amount)."""
+    """Update an expense (category, description, amount, or transaction_date).
+
+    When category is changed, the system learns from this correction
+    by saving keywords from the description to KeywordMapping.
+    This enables automatic categorization of similar expenses in the future.
+    """
+    from datetime import date as date_type
+
     expense = db.get(Expense, expense_id)
     if not expense:
         return {"error": "Expense not found"}
 
+    # Track if category is being changed (for learning)
+    old_category_id = expense.category_id
+    category_changed = False
+    learning_result = None
+
     if updates.category_id is not None:
+        if updates.category_id != old_category_id:
+            category_changed = True
         expense.category_id = updates.category_id
     if updates.description is not None:
         expense.description = updates.description
     if updates.amount is not None:
         expense.amount = updates.amount
+    if updates.transaction_date is not None:
+        try:
+            expense.transaction_date = date_type.fromisoformat(updates.transaction_date)
+        except ValueError:
+            pass
 
     db.add(expense)
     db.commit()
     db.refresh(expense)
 
+    # Learn from category correction
+    if category_changed and expense.description:
+        learning_result = learn_category_from_correction(
+            expense.description,
+            expense.category_id
+        )
+        logger.info(f"Learned from correction: {learning_result}")
+
     # Return with category name
     cat = db.get(Category, expense.category_id)
-    return {
+    response = {
         "id": expense.id,
         "amount": expense.amount,
         "description": expense.description,
         "category_id": expense.category_id,
         "category": cat.name if cat else "Unknown",
         "payer": expense.payer,
-        "created_at": expense.created_at.isoformat()
+        "created_at": expense.created_at.isoformat(),
+        "transaction_date": expense.transaction_date.isoformat() if expense.transaction_date else None
     }
+
+    # Include learning info if category was changed
+    if learning_result:
+        response["learned"] = learning_result
+
+    return response
 
 
 # ============ Income Endpoints ============
@@ -362,6 +410,24 @@ async def get_recent_expenses_api(limit: int = Query(default=10, le=50)):
     return get_recent_expenses(limit)
 
 
+@app.get("/api/analytics/advanced")
+async def get_advanced_analytics(
+    year: Optional[int] = Query(default=None),
+    month: Optional[int] = Query(default=None)
+):
+    """
+    Get advanced analytics including:
+    - Potential duplicate charges
+    - Top merchants/stores by spending
+    - Spending patterns by day of week
+    - Expense size distribution
+    """
+    now = datetime.now()
+    target_year = year if year is not None else now.year
+    target_month = month if month is not None else now.month
+    return calculate_advanced_analytics(target_year, target_month)
+
+
 @app.get("/api/analytics/comparison")
 async def get_monthly_comparison(
     months: int = Query(default=6, le=12),
@@ -427,21 +493,31 @@ async def get_monthly_comparison(
     return result
 
 
+def get_expense_effective_date(exp):
+    """Get the effective date for filtering - transaction_date if available, else created_at."""
+    if exp.transaction_date:
+        return exp.transaction_date
+    return exp.created_at.date()
+
+
 @app.get("/api/expenses/by-month")
 async def get_expenses_by_month(
     year: int = Query(...),
     month: int = Query(...),
     db: Session = Depends(get_session)
 ):
-    """Get all expenses for a specific month with category names."""
+    """Get all expenses for a specific month with category names.
+    Uses transaction_date for filtering if available, otherwise created_at.
+    """
     all_expenses = db.exec(
         select(Expense).order_by(Expense.created_at.desc())
     ).all()
 
-    month_expenses = [
-        exp for exp in all_expenses
-        if exp.created_at.year == year and exp.created_at.month == month
-    ]
+    month_expenses = []
+    for exp in all_expenses:
+        effective_date = get_expense_effective_date(exp)
+        if effective_date.year == year and effective_date.month == month:
+            month_expenses.append(exp)
 
     result = []
     for exp in month_expenses:
@@ -454,6 +530,7 @@ async def get_expenses_by_month(
             "category": cat.name if cat else "Unknown",
             "payer": exp.payer,
             "created_at": exp.created_at.isoformat(),
+            "transaction_date": exp.transaction_date.isoformat() if exp.transaction_date else None,
             "is_fixed": exp.is_fixed,
             "source": exp.source
         })
@@ -573,3 +650,120 @@ async def delete_recurring_expense(recurring_id: int, db: Session = Depends(get_
     db.delete(recurring)
     db.commit()
     return {"status": "deleted", "id": recurring_id}
+
+
+# ============ Keyword Mapping Endpoints (Learning System) ============
+
+@app.get("/api/keywords")
+async def get_keyword_mappings(db: Session = Depends(get_session)):
+    """Get all learned keyword-to-category mappings.
+
+    The system learns from user category corrections. When a user changes
+    the category of an expense, keywords from the description are saved here.
+    Future imports will automatically use these mappings.
+    """
+    mappings = db.exec(
+        select(KeywordMapping).order_by(KeywordMapping.keyword)
+    ).all()
+
+    result = []
+    for mapping in mappings:
+        cat = db.get(Category, mapping.category_id)
+        result.append({
+            "id": mapping.id,
+            "keyword": mapping.keyword,
+            "category_id": mapping.category_id,
+            "category": cat.name if cat else "Unknown"
+        })
+    return result
+
+
+@app.get("/api/keywords/stats")
+async def get_keyword_stats(db: Session = Depends(get_session)):
+    """Get statistics about learned keywords."""
+    mappings = db.exec(select(KeywordMapping)).all()
+    categories = db.exec(select(Category)).all()
+
+    # Count keywords per category
+    cat_counts = {}
+    for mapping in mappings:
+        cat = db.get(Category, mapping.category_id)
+        cat_name = cat.name if cat else "Unknown"
+        cat_counts[cat_name] = cat_counts.get(cat_name, 0) + 1
+
+    return {
+        "total_keywords": len(mappings),
+        "keywords_by_category": cat_counts
+    }
+
+
+class KeywordCreate(BaseModel):
+    keyword: str
+    category_id: int
+
+
+@app.post("/api/keywords")
+async def create_keyword_mapping(
+    mapping: KeywordCreate,
+    db: Session = Depends(get_session)
+):
+    """Manually add a keyword-to-category mapping."""
+    # Check if keyword already exists
+    existing = db.exec(
+        select(KeywordMapping).where(KeywordMapping.keyword == mapping.keyword.lower())
+    ).first()
+
+    if existing:
+        # Update existing
+        existing.category_id = mapping.category_id
+        db.add(existing)
+        db.commit()
+        db.refresh(existing)
+        cat = db.get(Category, existing.category_id)
+        return {
+            "id": existing.id,
+            "keyword": existing.keyword,
+            "category_id": existing.category_id,
+            "category": cat.name if cat else "Unknown",
+            "action": "updated"
+        }
+
+    # Create new
+    new_mapping = KeywordMapping(
+        keyword=mapping.keyword.lower(),
+        category_id=mapping.category_id
+    )
+    db.add(new_mapping)
+    db.commit()
+    db.refresh(new_mapping)
+    cat = db.get(Category, new_mapping.category_id)
+    return {
+        "id": new_mapping.id,
+        "keyword": new_mapping.keyword,
+        "category_id": new_mapping.category_id,
+        "category": cat.name if cat else "Unknown",
+        "action": "created"
+    }
+
+
+@app.delete("/api/keywords/{keyword_id}")
+async def delete_keyword_mapping(keyword_id: int, db: Session = Depends(get_session)):
+    """Delete a keyword mapping."""
+    mapping = db.get(KeywordMapping, keyword_id)
+    if not mapping:
+        return {"error": "Keyword mapping not found"}
+    keyword = mapping.keyword
+    db.delete(mapping)
+    db.commit()
+    return {"status": "deleted", "id": keyword_id, "keyword": keyword}
+
+
+@app.delete("/api/keywords/bulk/all")
+async def delete_all_keyword_mappings(db: Session = Depends(get_session)):
+    """Delete all learned keyword mappings (reset learning)."""
+    mappings = db.exec(select(KeywordMapping)).all()
+    count = len(mappings)
+    for mapping in mappings:
+        db.delete(mapping)
+    db.commit()
+    return {"status": "deleted", "count": count}

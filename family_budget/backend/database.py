@@ -39,6 +39,7 @@ class Expense(SQLModel, table=True):
     category_id: int = Field(foreign_key="categories.id", index=True)
     payer: Optional[str] = Field(default="Unknown")
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    transaction_date: Optional[date] = Field(default=None, index=True)  # Actual transaction date from statement
     is_fixed: bool = Field(default=False)
     source: str = Field(default="manual")  # 'manual' or 'file'
 
@@ -76,8 +77,32 @@ class RecurringExpense(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+def migrate_db():
+    """Run any necessary database migrations for existing databases."""
+    from sqlalchemy import text
+
+    with engine.connect() as conn:
+        # Check if expenses table exists and if transaction_date column exists
+        try:
+            # Get columns in expenses table
+            result = conn.execute(text("PRAGMA table_info(expenses)"))
+            columns = [row[1] for row in result.fetchall()]
+
+            # Add transaction_date column if it doesn't exist
+            if 'transaction_date' not in columns:
+                conn.execute(text("ALTER TABLE expenses ADD COLUMN transaction_date DATE"))
+                conn.commit()
+                print("Migration: Added transaction_date column to expenses table")
+        except Exception as e:
+            # Table might not exist yet, which is fine
+            print(f"Migration check skipped: {e}")
+
+
 def init_db():
     """Initialize database tables and seed default data."""
+    # Run migrations first for existing databases
+    migrate_db()
+
     SQLModel.metadata.create_all(engine)
 
     with Session(engine) as session:

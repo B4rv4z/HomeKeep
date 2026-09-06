@@ -212,6 +212,135 @@ def extract_amount_only(text: str) -> Optional[float]:
     return float(match.group(1)) if match else None
 
 
+def extract_keywords_from_description(description: str) -> List[str]:
+    """
+    Extract meaningful keywords from an expense description for learning.
+
+    Strategy:
+    1. Clean and normalize the text
+    2. Extract significant words (length >= 3, not numbers)
+    3. Also extract the full description as a keyword for exact matching
+
+    Returns:
+        List of keywords to save for category mapping
+    """
+    if not description:
+        return []
+
+    # Normalize whitespace
+    text = " ".join(description.strip().split())
+
+    keywords = []
+
+    # Add full description as primary keyword (for exact matches)
+    if len(text) >= 3:
+        keywords.append(text.lower())
+
+    # Extract individual significant words
+    words = text.split()
+    for word in words:
+        # Clean word of punctuation
+        clean_word = re.sub(r'[^\w\u0590-\u05FF]', '', word)  # Keep Hebrew and alphanumeric
+
+        # Skip short words and numbers
+        if len(clean_word) >= 3 and not clean_word.isdigit():
+            lower_word = clean_word.lower()
+            if lower_word not in keywords:
+                keywords.append(lower_word)
+
+    return keywords
+
+
+def learn_category_from_correction(description: str, new_category_id: int) -> dict:
+    """
+    Learn from a user's category correction by saving keywords to KeywordMapping.
+
+    When a user changes the category of an expense, this function:
+    1. Extracts keywords from the expense description
+    2. Saves them to KeywordMapping for future auto-categorization
+
+    Args:
+        description: The expense description to learn from
+        new_category_id: The correct category ID the user assigned
+
+    Returns:
+        dict with 'keywords_added' count and 'keywords_updated' count
+    """
+    keywords = extract_keywords_from_description(description)
+
+    if not keywords:
+        return {"keywords_added": 0, "keywords_updated": 0}
+
+    added = 0
+    updated = 0
+
+    with Session(engine) as session:
+        for keyword in keywords:
+            # Check if keyword already exists
+            existing = session.exec(
+                select(KeywordMapping).where(KeywordMapping.keyword == keyword)
+            ).first()
+
+            if existing:
+                # Update if category changed
+                if existing.category_id != new_category_id:
+                    existing.category_id = new_category_id
+                    session.add(existing)
+                    updated += 1
+                    logger.info(f"Updated keyword mapping: '{keyword}' -> category_id={new_category_id}")
+            else:
+                # Add new mapping
+                new_mapping = KeywordMapping(
+                    keyword=keyword,
+                    category_id=new_category_id
+                )
+                session.add(new_mapping)
+                added += 1
+                logger.info(f"Added keyword mapping: '{keyword}' -> category_id={new_category_id}")
+
+        session.commit()
+
+    return {"keywords_added": added, "keywords_updated": updated}
+
+
+def get_category_by_keywords(description: str) -> Optional[Tuple[int, str]]:
+    """
+    Try to find a category by matching learned keywords.
+
+    Args:
+        description: The expense description to match
+
+    Returns:
+        Tuple of (category_id, category_name) if found, None otherwise
+    """
+    if not description:
+        return None
+
+    text_lower = description.lower().strip()
+
+    with Session(engine) as session:
+        mappings = session.exec(select(KeywordMapping)).all()
+
+        # Try exact match first (full description)
+        for mapping in mappings:
+            if mapping.keyword == text_lower:
+                cat = session.get(Category, mapping.category_id)
+                if cat:
+                    logger.info(f"Exact keyword match: '{description}' -> '{cat.name}'")
+                    return cat.id, cat.name
+
+        # Try word-level matching
+        for mapping in mappings:
+            pattern = r"\b" + re.escape(mapping.keyword) + r"\b"
+            if re.search(pattern, text_lower):
+                cat = session.get(Category, mapping.category_id)
+                if cat:
+                    logger.info(f"Keyword match: '{description}' -> '{cat.name}' (keyword: {mapping.keyword})")
+                    return cat.id, cat.name
+
+        return None
+
+
 def clean_pdf_text(text: str) -> str:
     """
     Clean PDF extracted text to make it easier for LLM to parse.
@@ -323,8 +452,12 @@ def parse_bulk_transactions(text: str) -> tuple[List[dict], str]:
                         f"4. Classify each into one of: {categories_str}\n"
                         f"5. If unsure about category, use 'כללי ושונות'\n"
                         f"6. DO NOT skip any transactions - extract every single one with an amount\n"
-                        f"7. Each transaction should appear ONCE - do not create duplicates\n\n"
-                        f"Return valid JSON: {{\"transactions\": [{{\"amount\": 123.45, \"description\": \"Store\", \"category\": \"קטגוריה\"}}]}}"
+                        f"7. Each transaction should appear ONCE - do not create duplicates\n"
+                        f"8. Extract the transaction date (תאריך עסקה) for each transaction in YYYY-MM-DD format\n"
+                        f"   - Israeli dates are typically DD/MM/YY or DD/MM/YYYY format - convert to YYYY-MM-DD\n"
+                        f"   - If year is 2-digit (e.g., 25), assume 20XX (2025)\n"
+                        f"   - If date is not found, use null\n\n"
+                        f"Return valid JSON: {{\"transactions\": [{{\"amount\": 123.45, \"description\": \"Store\", \"category\": \"קטגוריה\", \"date\": \"2025-01-15\"}}]}}"
                     )
                 },
                 {
@@ -353,10 +486,12 @@ def parse_bulk_transactions(text: str) -> tuple[List[dict], str]:
             logger.warning("LLM did not return a list")
             return [], "Invalid response format"
 
-        # Map category names to IDs
+        # Map category names to IDs, applying learned keyword mappings
         parsed = []
+        learned_matches = 0
         with Session(engine) as session:
             cat_map = {c.name: c.id for c in session.exec(select(Category)).all()}
+            cat_id_map = {c.id: c.name for c in session.exec(select(Category)).all()}
             fallback = session.exec(
                 select(Category).where(Category.name == "כללי ושונות")
             ).first()
@@ -368,22 +503,37 @@ def parse_bulk_transactions(text: str) -> tuple[List[dict], str]:
                     continue
                 amount = tx.get("amount")
                 desc = tx.get("description", "Unknown")
-                cat_name = tx.get("category", fallback_name)
+                llm_cat_name = tx.get("category", fallback_name)
+                tx_date = tx.get("date")  # YYYY-MM-DD format or null
 
                 if amount is None or not isinstance(amount, (int, float)):
                     continue
 
-                cat_id = cat_map.get(cat_name, fallback_id)
-                if cat_name not in cat_map:
-                    cat_name = fallback_name
-                    cat_id = fallback_id
+                # PRIORITY: Check learned keyword mappings first
+                # This allows user corrections to override LLM classifications
+                keyword_match = get_category_by_keywords(str(desc))
+                if keyword_match:
+                    cat_id, cat_name = keyword_match
+                    learned_matches += 1
+                    logger.info(f"Using learned category for '{desc}': {cat_name} (LLM suggested: {llm_cat_name})")
+                else:
+                    # Fall back to LLM classification
+                    cat_id = cat_map.get(llm_cat_name, fallback_id)
+                    cat_name = llm_cat_name
+                    if llm_cat_name not in cat_map:
+                        cat_name = fallback_name
+                        cat_id = fallback_id
 
                 parsed.append({
                     "amount": float(amount),
                     "description": str(desc),
                     "category_id": cat_id,
-                    "category_name": cat_name
+                    "category_name": cat_name,
+                    "transaction_date": tx_date  # Can be None or YYYY-MM-DD string
                 })
+
+        if learned_matches > 0:
+            logger.info(f"Applied learned keyword mappings to {learned_matches}/{len(parsed)} transactions")
 
         logger.info(f"Parsed {len(parsed)} transactions from bulk text")
         return parsed, ""

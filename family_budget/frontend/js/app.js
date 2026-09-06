@@ -3,9 +3,12 @@
 let chartInstance = null;
 let comparisonChartInstance = null;
 let categoryTrendChartInstance = null;
+let dayOfWeekChartInstance = null;
+let sizeDistributionChartInstance = null;
 let categories = [];
 let currentExpenses = [];
 let selectedExpenseMonth = null;
+let selectedReportsMonth = null;
 
 // ============ API Helpers ============
 
@@ -492,7 +495,9 @@ function renderExpensesTable(expenses) {
     return;
   }
   expenses.forEach(exp => {
-    const date = new Date(exp.created_at).toLocaleDateString("he-IL");
+    // Use transaction_date if available, otherwise created_at
+    const dateStr = exp.transaction_date || exp.created_at;
+    const date = new Date(dateStr).toLocaleDateString("he-IL");
     const sourceLabel = exp.source === 'file' ? 'קובץ' : 'ידני';
     const tr = document.createElement("tr");
     tr.className = "hover:bg-slate-800/50";
@@ -573,14 +578,231 @@ async function handleExpenseDelete(e) {
 // ============ Reports Tab ============
 
 async function loadReportsTab() {
+  // Initialize month selector if needed
+  const select = document.getElementById("reports-month-select");
+  if (select.options.length === 0) {
+    const now = new Date();
+    for (let i = 0; i < 12; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const option = document.createElement("option");
+      option.value = `${d.getFullYear()}-${d.getMonth() + 1}`;
+      option.textContent = d.toLocaleDateString('he-IL', { year: 'numeric', month: 'long' });
+      select.appendChild(option);
+    }
+  }
+  if (!selectedReportsMonth) {
+    selectedReportsMonth = select.value;
+  }
+  select.value = selectedReportsMonth;
+
   try {
-    const data = await apiGet("/api/analytics/comparison?months=6");
-    renderComparisonChart(data);
-    renderCategoryTrendChart(data);
-    renderComparisonTable(data);
+    // Load both comparison data and advanced analytics
+    const [comparisonData] = await Promise.all([
+      apiGet("/api/analytics/comparison?months=6"),
+      loadAdvancedAnalytics()
+    ]);
+    renderComparisonChart(comparisonData);
+    renderCategoryTrendChart(comparisonData);
+    renderComparisonTable(comparisonData);
   } catch (error) {
     console.error("Failed to load reports:", error);
   }
+}
+
+async function loadAdvancedAnalytics() {
+  const select = document.getElementById("reports-month-select");
+  selectedReportsMonth = select.value;
+  const [year, month] = selectedReportsMonth.split('-').map(Number);
+
+  try {
+    const data = await apiGet(`/api/analytics/advanced?year=${year}&month=${month}`);
+    renderAdvancedAnalytics(data);
+  } catch (error) {
+    console.error("Failed to load advanced analytics:", error);
+  }
+}
+
+function renderAdvancedAnalytics(data) {
+  // Update stats cards
+  document.getElementById("stat-transactions").textContent = data.total_transactions.toLocaleString();
+  document.getElementById("stat-daily-avg").textContent = `₪${data.daily_average.toLocaleString()}`;
+  document.getElementById("stat-unique-merchants").textContent = data.top_merchants.length;
+  document.getElementById("stat-duplicates").textContent = data.potential_duplicates.length;
+
+  // Render insights
+  const insightsCard = document.getElementById("advanced-insights-card");
+  const insightsList = document.getElementById("advanced-insights-list");
+  insightsList.innerHTML = "";
+  if (data.insights && data.insights.length > 0) {
+    insightsCard.classList.remove("hidden");
+    data.insights.forEach(insight => {
+      const li = document.createElement("li");
+      li.innerHTML = `<span class="text-slate-300">• ${insight}</span>`;
+      insightsList.appendChild(li);
+    });
+  } else {
+    insightsCard.classList.add("hidden");
+  }
+
+  // Render potential duplicates
+  renderDuplicates(data.potential_duplicates);
+
+  // Render top merchants
+  renderTopMerchants(data.top_merchants, data.total_spent);
+
+  // Render charts
+  renderDayOfWeekChart(data.spending_by_day_of_week);
+  renderSizeDistributionChart(data.expense_size_distribution);
+}
+
+function renderDuplicates(duplicates) {
+  const section = document.getElementById("duplicates-section");
+  const list = document.getElementById("duplicates-list");
+  list.innerHTML = "";
+
+  if (duplicates.length === 0) {
+    section.classList.add("hidden");
+    return;
+  }
+
+  section.classList.remove("hidden");
+
+  duplicates.forEach(dup => {
+    const item = document.createElement("div");
+    item.className = "bg-slate-900/50 p-3 rounded-lg border border-rose-900/30";
+    item.innerHTML = `
+      <div class="flex justify-between items-start gap-4">
+        <div class="flex-1">
+          <div class="text-slate-200 font-medium">${dup.expense1.description}</div>
+          <div class="text-xs text-slate-400">${dup.expense1.date} • ${dup.expense1.category}</div>
+        </div>
+        <div class="text-rose-400 font-bold">₪${dup.expense1.amount.toLocaleString()}</div>
+      </div>
+      <div class="my-2 text-center text-xs text-slate-500">↕️ ${dup.days_apart} ימים הפרש</div>
+      <div class="flex justify-between items-start gap-4">
+        <div class="flex-1">
+          <div class="text-slate-200 font-medium">${dup.expense2.description}</div>
+          <div class="text-xs text-slate-400">${dup.expense2.date} • ${dup.expense2.category}</div>
+        </div>
+        <div class="text-rose-400 font-bold">₪${dup.expense2.amount.toLocaleString()}</div>
+      </div>
+    `;
+    list.appendChild(item);
+  });
+}
+
+function renderTopMerchants(merchants, totalSpent) {
+  const list = document.getElementById("top-merchants-list");
+  list.innerHTML = "";
+
+  if (merchants.length === 0) {
+    list.innerHTML = '<div class="text-slate-500 text-center py-4">אין נתונים להצגה</div>';
+    return;
+  }
+
+  const maxTotal = merchants[0].total;
+
+  merchants.forEach((merchant, index) => {
+    const percentage = totalSpent > 0 ? (merchant.total / totalSpent * 100).toFixed(1) : 0;
+    const barWidth = (merchant.total / maxTotal * 100);
+    const item = document.createElement("div");
+    item.className = "relative";
+    item.innerHTML = `
+      <div class="flex justify-between items-center mb-1">
+        <div class="flex items-center gap-2">
+          <span class="text-xs text-slate-500 w-5">${index + 1}.</span>
+          <span class="text-sm text-slate-200">${merchant.name}</span>
+          <span class="text-xs text-slate-500">(${merchant.count} עסקאות)</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="text-sm font-medium text-emerald-400">₪${merchant.total.toLocaleString()}</span>
+          <span class="text-xs text-slate-500">${percentage}%</span>
+        </div>
+      </div>
+      <div class="w-full bg-slate-700 h-1.5 rounded-full overflow-hidden">
+        <div class="bg-emerald-500 h-full transition-all duration-300" style="width: ${barWidth}%"></div>
+      </div>
+    `;
+    list.appendChild(item);
+  });
+}
+
+function renderDayOfWeekChart(dayData) {
+  const ctx = document.getElementById("dayOfWeekChart").getContext("2d");
+  if (dayOfWeekChartInstance) dayOfWeekChartInstance.destroy();
+
+  // Sort by day number for correct order (Sunday first in Israel)
+  const sortedData = [...dayData].sort((a, b) => {
+    // Reorder: Sunday (6) first, then Monday (0) through Saturday (5)
+    const orderA = a.day_num === 6 ? 0 : a.day_num + 1;
+    const orderB = b.day_num === 6 ? 0 : b.day_num + 1;
+    return orderA - orderB;
+  });
+
+  dayOfWeekChartInstance = new Chart(ctx, {
+    type: "bar",
+    data: {
+      labels: sortedData.map(d => d.day),
+      datasets: [{
+        label: 'סה"כ הוצאות',
+        data: sortedData.map(d => d.total),
+        backgroundColor: '#38bdf8',
+        borderRadius: 4
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => `₪${ctx.parsed.y.toLocaleString()} (${sortedData[ctx.dataIndex].count} עסקאות)`
+          }
+        }
+      },
+      scales: {
+        x: { ticks: { color: '#94a3b8' }, grid: { display: false } },
+        y: { ticks: { color: '#94a3b8', callback: (v) => `₪${v.toLocaleString()}` }, grid: { color: '#334155' } }
+      }
+    }
+  });
+}
+
+function renderSizeDistributionChart(sizeData) {
+  const ctx = document.getElementById("sizeDistributionChart").getContext("2d");
+  if (sizeDistributionChartInstance) sizeDistributionChartInstance.destroy();
+
+  const labels = Object.keys(sizeData);
+  const values = Object.values(sizeData);
+  const colors = ['#10b981', '#38bdf8', '#f59e0b', '#ec4899', '#f43f5e'];
+
+  sizeDistributionChartInstance = new Chart(ctx, {
+    type: "doughnut",
+    data: {
+      labels: labels,
+      datasets: [{
+        data: values,
+        backgroundColor: colors,
+        borderWidth: 0
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          position: 'right',
+          labels: { color: '#94a3b8', font: { size: 10 }, padding: 8 }
+        },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => `${ctx.label}: ${ctx.parsed} עסקאות`
+          }
+        }
+      }
+    }
+  });
 }
 
 function renderComparisonChart(data) {
@@ -687,6 +909,7 @@ function renderComparisonTable(data) {
 async function loadSettingsTab() {
   await loadCategories();
   renderCategoriesList();
+  await loadKeywords();
 }
 
 function renderCategoriesList() {
@@ -777,6 +1000,105 @@ function setupCategoryForm() {
   });
 }
 
+// ============ Keywords Management (Learning System) ============
+
+async function loadKeywords() {
+  try {
+    const keywords = await apiGet("/api/keywords");
+    renderKeywordsList(keywords);
+    document.getElementById("keywords-count").textContent = `${keywords.length} מילות מפתח`;
+    // Populate category select for new keyword form
+    const select = document.getElementById("new-keyword-category");
+    if (select) {
+      select.innerHTML = categories.map(cat => `<option value="${cat.id}">${cat.name}</option>`).join('');
+    }
+  } catch (error) {
+    console.error("Failed to load keywords:", error);
+  }
+}
+
+function renderKeywordsList(keywords) {
+  const container = document.getElementById("keywords-list");
+  container.innerHTML = "";
+
+  if (keywords.length === 0) {
+    container.innerHTML = '<div class="p-4 text-center text-slate-500 text-xs">אין מילות מפתח נלמדות עדיין. שנה קטגוריה של הוצאה והמערכת תלמד!</div>';
+    return;
+  }
+
+  // Group keywords by category for better display
+  const groupedByCategory = {};
+  keywords.forEach(kw => {
+    if (!groupedByCategory[kw.category]) {
+      groupedByCategory[kw.category] = [];
+    }
+    groupedByCategory[kw.category].push(kw);
+  });
+
+  for (const [categoryName, categoryKeywords] of Object.entries(groupedByCategory)) {
+    const groupDiv = document.createElement("div");
+    groupDiv.className = "p-3 hover:bg-slate-800/30";
+    groupDiv.innerHTML = `
+      <div class="text-xs font-semibold text-emerald-400 mb-2">${categoryName}</div>
+      <div class="flex flex-wrap gap-2">
+        ${categoryKeywords.map(kw => `
+          <span class="inline-flex items-center gap-1 bg-slate-700/50 text-slate-300 text-xs px-2 py-1 rounded group">
+            ${kw.keyword}
+            <button onclick="deleteKeyword(${kw.id})" class="text-slate-500 hover:text-rose-400 opacity-0 group-hover:opacity-100 transition">✕</button>
+          </span>
+        `).join('')}
+      </div>
+    `;
+    container.appendChild(groupDiv);
+  }
+}
+
+async function deleteKeyword(keywordId) {
+  try {
+    await apiDelete(`/api/keywords/${keywordId}`);
+    await loadKeywords();
+  } catch (error) {
+    alert("שגיאה במחיקת מילת מפתח");
+  }
+}
+
+async function clearAllKeywords() {
+  if (!confirm("האם אתה בטוח שברצונך למחוק את כל מילות המפתח הנלמדות?\n\nהמערכת תצטרך ללמוד מחדש משינויי קטגוריות.")) {
+    return;
+  }
+  try {
+    const result = await apiDelete("/api/keywords/bulk/all");
+    alert(`נמחקו ${result.count} מילות מפתח`);
+    await loadKeywords();
+  } catch (error) {
+    alert("שגיאה באיפוס הלמידה");
+  }
+}
+
+function setupKeywordForm() {
+  const form = document.getElementById("keyword-form");
+  if (!form) return;
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const keyword = document.getElementById("new-keyword").value.trim();
+    const categoryId = parseInt(document.getElementById("new-keyword-category").value);
+
+    if (!keyword) return;
+
+    try {
+      await apiPost("/api/keywords", {
+        keyword: keyword,
+        category_id: categoryId
+      });
+      document.getElementById("new-keyword").value = "";
+      await loadKeywords();
+    } catch (error) {
+      alert("שגיאה בהוספת מילת מפתח");
+    }
+  });
+}
+
 // ============ Initialize ============
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -786,5 +1108,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   setupFormHandlers();
   setupRecurringForm();
   setupCategoryForm();
+  setupKeywordForm();
   setInterval(refreshDashboard, 30000);
 });

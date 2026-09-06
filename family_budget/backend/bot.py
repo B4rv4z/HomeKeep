@@ -389,16 +389,26 @@ def extract_text_from_xlsx(xlsx_bytes: bytes) -> str:
 
 def save_transactions_to_db(transactions: list, sender_name: str) -> int:
     """Save transactions to database and return count."""
+    from datetime import date as date_type
     saved_count = 0
     with Session(engine) as session:
         for tx in transactions:
+            # Parse transaction_date if provided
+            tx_date = None
+            if tx.get("transaction_date"):
+                try:
+                    tx_date = date_type.fromisoformat(tx["transaction_date"])
+                except (ValueError, TypeError):
+                    pass  # Keep as None if parsing fails
+
             expense = Expense(
                 amount=tx["amount"],
                 description=tx["description"],
                 category_id=tx["category_id"],
                 payer=sender_name,
                 is_fixed=False,
-                source="file"
+                source="file",
+                transaction_date=tx_date
             )
             session.add(expense)
             saved_count += 1
