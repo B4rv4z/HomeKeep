@@ -860,3 +860,74 @@ async def clear_activity_logs(db: Session = Depends(get_session)):
         db.delete(log)
     db.commit()
     return {"status": "cleared", "count": count}
+
+
+# ============ Date Range Endpoint ============
+
+@app.get("/api/analytics/date-range")
+async def get_available_date_range(db: Session = Depends(get_session)):
+    """
+    Get the available date range based on actual expense data.
+    Returns months from the earliest expense to the end of the current year,
+    allowing for future growth.
+    """
+    from datetime import datetime
+    from dateutil.relativedelta import relativedelta
+
+    # Get all expenses and find earliest date
+    all_expenses = db.exec(select(Expense)).all()
+
+    if not all_expenses:
+        # No data - just return current month to end of year
+        now = datetime.now()
+        return {
+            "start_year": now.year,
+            "start_month": now.month,
+            "end_year": now.year,
+            "end_month": 12,
+            "months": [{
+                "value": f"{now.year}-{now.month}",
+                "label": now.strftime("%B %Y")
+            }]
+        }
+
+    # Find earliest and latest expense dates
+    earliest_date = None
+    latest_date = None
+
+    for exp in all_expenses:
+        effective_date = get_expense_effective_date(exp)
+        if earliest_date is None or effective_date < earliest_date:
+            earliest_date = effective_date
+        if latest_date is None or effective_date > latest_date:
+            latest_date = effective_date
+
+    now = datetime.now()
+
+    # Start from earliest expense month
+    start_year = earliest_date.year
+    start_month = earliest_date.month
+
+    # End at December of current year (or latest expense year if it's in the future)
+    end_year = max(now.year, latest_date.year)
+    end_month = 12
+
+    # Generate list of months from start to end
+    months = []
+    current = datetime(start_year, start_month, 1)
+    end = datetime(end_year, end_month, 1)
+
+    while current <= end:
+        months.append({
+            "value": f"{current.year}-{current.month}",
+            "label": current.strftime("%B %Y")
+        })
+        current += relativedelta(months=1)
+
+    return {
+        "start_year": start_year,
+        "start_month": start_month,
+        "end_year": end_year,
+        "end_month": end_month,
+        "months": months
+    }

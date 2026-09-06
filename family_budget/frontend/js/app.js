@@ -81,22 +81,43 @@ function switchTab(tabName) {
 
 // ============ Global Month Selector ============
 
-function initGlobalMonthSelector() {
+async function initGlobalMonthSelector() {
   const select = document.getElementById("global-month-select");
-  if (select.options.length === 0) {
-    const now = new Date();
-    for (let i = 0; i < 12; i++) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+
+  try {
+    // Fetch available date range from API
+    const dateRange = await apiGet("/api/analytics/date-range");
+
+    // Clear existing options
+    select.innerHTML = "";
+
+    // Populate with months from API (data-driven range)
+    dateRange.months.forEach(month => {
       const option = document.createElement("option");
-      option.value = `${d.getFullYear()}-${d.getMonth() + 1}`;
+      option.value = month.value;
+      // Convert to Hebrew locale for display
+      const [year, monthNum] = month.value.split('-').map(Number);
+      const d = new Date(year, monthNum - 1, 1);
       option.textContent = d.toLocaleDateString('he-IL', { year: 'numeric', month: 'long' });
       select.appendChild(option);
+    });
+
+    // Default to first month with data (which is most recent based on API response order)
+    // Actually, the API returns from earliest to latest, so default to last option (most recent)
+    if (!selectedMonth && dateRange.months.length > 0) {
+      selectedMonth = dateRange.months[dateRange.months.length - 1].value;
     }
+    select.value = selectedMonth;
+  } catch (error) {
+    console.error("Failed to load date range:", error);
+    // Fallback to current month only
+    const now = new Date();
+    const option = document.createElement("option");
+    option.value = `${now.getFullYear()}-${now.getMonth() + 1}`;
+    option.textContent = now.toLocaleDateString('he-IL', { year: 'numeric', month: 'long' });
+    select.appendChild(option);
+    selectedMonth = option.value;
   }
-  if (!selectedMonth) {
-    selectedMonth = select.value;
-  }
-  select.value = selectedMonth;
 }
 
 function changeGlobalMonth(delta) {
@@ -1187,7 +1208,7 @@ async function clearActivityLogs() {
 
 document.addEventListener("DOMContentLoaded", async () => {
   await loadCategories();
-  initGlobalMonthSelector();
+  await initGlobalMonthSelector();
   await fetchDashboard();
   await fetchRecurringExpenses();
   setupFormHandlers();
