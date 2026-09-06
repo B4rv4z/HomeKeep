@@ -452,12 +452,14 @@ def extract_text_from_xlsx(xlsx_bytes: bytes) -> str:
         lines = []
 
         for sheet in workbook.worksheets:
-            # First, capture header rows that may contain charge date info
+            # First, capture header rows that may contain charge date info (but not transaction data)
             header_lines = []
             for row_idx, row in enumerate(sheet.iter_rows(max_row=5, values_only=True), start=1):
                 row_values = [str(cell) if cell is not None else "" for cell in row]
                 row_text = " ".join(row_values).strip()
-                if row_text and ("עסקאות" in row_text or "חיוב" in row_text or "לתאריך" in row_text):
+                # Look for charge date headers like "עסקאות לחיוב ב-" but NOT transaction rows
+                # Transaction rows have dates like DD-MM-YYYY at the start
+                if row_text and ("עסקאות לחיוב" in row_text or "לתאריך" in row_text):
                     header_lines.append(row_text)
 
             # Add header lines to output first
@@ -515,7 +517,25 @@ def extract_text_from_xlsx(xlsx_bytes: bytes) -> str:
                         lines.append(" ".join(row_values))
 
         workbook.close()
-        return "\n".join(lines)
+
+        # Post-process: Remove summary/total lines that confuse GPT into stopping early
+        # Keep transaction lines, remove "סך הכל" and standalone amount lines
+        import re
+        cleaned_lines = []
+        for line in lines:
+            line_stripped = line.strip()
+            # Skip empty lines
+            if not line_stripped:
+                continue
+            # Skip "סך הכל" summary lines
+            if line_stripped == "סך הכל":
+                continue
+            # Skip standalone amount lines like "7937.21₪" or "2681.81₪"
+            if re.match(r'^[\d,]+\.?\d*\s*₪?$', line_stripped):
+                continue
+            cleaned_lines.append(line)
+
+        return "\n".join(cleaned_lines)
     except ImportError:
         logger.warning("openpyxl not installed - XLSX parsing unavailable")
         return ""
