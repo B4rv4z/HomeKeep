@@ -6,10 +6,36 @@ import uuid
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, CommandHandler, CallbackQueryHandler, filters
 from sqlmodel import Session
-from backend.database import engine, Expense
+from backend.database import engine, Expense, ActivityLog
 from backend.parser import parse_expense_text, parse_bulk_transactions
 
 logger = logging.getLogger(__name__)
+
+
+def log_activity(
+    action: str,
+    source: str,
+    details: str = "",
+    record_count: int = None,
+    file_date: str = None,
+    total_amount: float = None
+):
+    """Log an activity to the activity_logs table."""
+    import json
+    from datetime import date as date_type
+
+    with Session(engine) as session:
+        log_entry = ActivityLog(
+            action=action,
+            source=source,
+            details=details if isinstance(details, str) else json.dumps(details, ensure_ascii=False),
+            record_count=record_count,
+            file_date=date_type.fromisoformat(file_date) if file_date else None,
+            total_amount=total_amount
+        )
+        session.add(log_entry)
+        session.commit()
+
 
 # In-memory storage for pending bulk imports (keyed by unique ID)
 # Format: {import_id: {"transactions": [...], "sender_name": str, "chat_id": int}}
@@ -691,6 +717,16 @@ async def process_bulk_text(update: Update, text: str, sender_name: str, expecte
     # No mismatch or mismatch <= 5% - save directly
     saved_count = save_transactions_to_db(transactions, sender_name, charge_date)
 
+    # Log the activity
+    log_activity(
+        action="file_import",
+        source="telegram",
+        details=f"Imported by {sender_name}",
+        record_count=saved_count,
+        file_date=charge_date if charge_date else None,
+        total_amount=total
+    )
+
     reply = (
         f"*Bulk Import Complete*\n\n"
         f"Transactions: {saved_count}\n"
@@ -746,6 +782,16 @@ async def handle_import_callback(update: Update, context: ContextTypes.DEFAULT_T
     total = sum(tx["amount"] for tx in transactions)
     category_summary, validation_msg, _ = build_import_summary(transactions, expected_total)
 
+    # Log the activity
+    log_activity(
+        action="file_import",
+        source="telegram",
+        details=f"Imported by {sender_name} (approved with mismatch)",
+        record_count=saved_count,
+        file_date=charge_date if charge_date else None,
+        total_amount=total
+    )
+
     charge_date_msg = f"\nCharge Date: {charge_date}\n" if charge_date else ""
     reply = (
         f"✅ *Bulk Import Approved & Saved*\n\n"
@@ -799,6 +845,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         session.add(expense)
         session.commit()
+
+    # Log the activity
+    log_activity(
+        action="expense_added",
+        source="telegram",
+        details=f"{description} ({cat_name}) by {sender_name}",
+        record_count=1,
+        total_amount=amount
+    )
 
     reply = (
         f"*Expense Logged*\n"
