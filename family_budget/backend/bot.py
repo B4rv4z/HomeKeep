@@ -213,9 +213,11 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 charge_date = extract_charge_date_from_xlsx(bytes(file_bytes))
 
         # PDF files: extract text and use GPT
+        # Don't use regex-based total extraction - it's unreliable
+        # Let the LLM extract document_total instead (handled in process_bulk_text)
         elif file_ext == ".pdf":
             text = extract_text_from_pdf(file_bytes)
-            expected_total = extract_expected_total_from_pdf(bytes(file_bytes))
+            expected_total = 0.0  # LLM will extract this
             charge_date = extract_charge_date_from_pdf(bytes(file_bytes))
 
         # TXT or CSV: decode as text
