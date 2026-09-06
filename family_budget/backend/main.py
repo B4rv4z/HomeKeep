@@ -158,12 +158,15 @@ async def delete_expenses_by_month(
     month: int = Query(...),
     db: Session = Depends(get_session)
 ):
-    """Delete all expenses for a specific month."""
+    """Delete all expenses for a specific month.
+    Uses transaction_date for filtering if available, otherwise created_at.
+    """
     all_expenses = db.exec(select(Expense)).all()
-    month_expenses = [
-        exp for exp in all_expenses
-        if exp.created_at.year == year and exp.created_at.month == month
-    ]
+    month_expenses = []
+    for exp in all_expenses:
+        effective_date = get_expense_effective_date(exp)
+        if effective_date.year == year and effective_date.month == month:
+            month_expenses.append(exp)
     count = len(month_expenses)
     for expense in month_expenses:
         db.delete(expense)
