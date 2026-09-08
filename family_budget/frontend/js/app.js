@@ -83,6 +83,8 @@ function switchTab(tabName) {
 
 async function initGlobalMonthSelector() {
   const select = document.getElementById("global-month-select");
+  const now = new Date();
+  const currentMonthValue = `${now.getFullYear()}-${now.getMonth() + 1}`;
 
   try {
     // Fetch available date range from API
@@ -102,18 +104,22 @@ async function initGlobalMonthSelector() {
       select.appendChild(option);
     });
 
-    // Default to first month with data (which is most recent based on API response order)
-    // Actually, the API returns from earliest to latest, so default to last option (most recent)
-    if (!selectedMonth && dateRange.months.length > 0) {
-      selectedMonth = dateRange.months[dateRange.months.length - 1].value;
+    // Always default to current month from API (use API's current_month for consistency)
+    const apiCurrentMonth = dateRange.current_month || currentMonthValue;
+    selectedMonth = apiCurrentMonth;
+
+    // Find and select the correct option by index (more reliable than setting value directly)
+    const optionIndex = dateRange.months.findIndex(m => m.value === selectedMonth);
+    if (optionIndex >= 0) {
+      select.selectedIndex = optionIndex;
+    } else {
+      select.value = selectedMonth;
     }
-    select.value = selectedMonth;
   } catch (error) {
     console.error("Failed to load date range:", error);
     // Fallback to current month only
-    const now = new Date();
     const option = document.createElement("option");
-    option.value = `${now.getFullYear()}-${now.getMonth() + 1}`;
+    option.value = currentMonthValue;
     option.textContent = now.toLocaleDateString('he-IL', { year: 'numeric', month: 'long' });
     select.appendChild(option);
     selectedMonth = option.value;
@@ -499,8 +505,6 @@ async function loadExpensesByMonth() {
   const [year, month] = selectedMonth.split('-').map(Number);
   try {
     currentExpenses = await apiGet(`/api/expenses/by-month?year=${year}&month=${month}`);
-    const total = currentExpenses.reduce((sum, e) => sum + e.amount, 0);
-    document.getElementById("expense-month-total").textContent = `₪${total.toLocaleString()}`;
     filterExpenses();
   } catch (error) {
     console.error("Failed to load expenses:", error);
@@ -538,6 +542,39 @@ function filterExpenses() {
     filtered = filtered.filter(e => e.description.toLowerCase().includes(searchText));
   }
   renderExpensesTable(filtered);
+  updateExpenseSummary(filtered, categoryFilter);
+}
+
+function updateExpenseSummary(filteredExpenses, categoryFilter) {
+  const totalSpent = filteredExpenses.reduce((sum, e) => sum + e.amount, 0);
+  const summaryEl = document.getElementById("expense-month-total");
+  const labelEl = document.getElementById("expense-summary-label");
+
+  if (categoryFilter) {
+    // Show budget vs spent for selected category
+    const selectedCategory = categories.find(c => c.id === parseInt(categoryFilter));
+    if (selectedCategory && selectedCategory.monthly_budget > 0) {
+      const budget = selectedCategory.monthly_budget;
+      const percentUsed = Math.round((totalSpent / budget) * 100);
+      const isOver = totalSpent > budget;
+      summaryEl.innerHTML = `<span class="${isOver ? 'text-rose-400' : 'text-emerald-400'}">₪${totalSpent.toLocaleString()}</span> <span class="text-slate-400">/</span> <span class="text-slate-300">₪${budget.toLocaleString()}</span> <span class="text-xs ${isOver ? 'text-rose-400' : 'text-slate-400'}">(${percentUsed}%)</span>`;
+      if (labelEl) labelEl.textContent = `${selectedCategory.name}:`;
+    } else {
+      summaryEl.textContent = `₪${totalSpent.toLocaleString()}`;
+      if (labelEl) labelEl.textContent = selectedCategory ? `${selectedCategory.name}:` : 'סה"כ הוצאות:';
+    }
+  } else {
+    // Show total budget vs total spent for all categories
+    const totalBudget = categories.reduce((sum, c) => sum + (c.monthly_budget || 0), 0);
+    if (totalBudget > 0) {
+      const percentUsed = Math.round((totalSpent / totalBudget) * 100);
+      const isOver = totalSpent > totalBudget;
+      summaryEl.innerHTML = `<span class="${isOver ? 'text-rose-400' : 'text-emerald-400'}">₪${totalSpent.toLocaleString()}</span> <span class="text-slate-400">/</span> <span class="text-slate-300">₪${totalBudget.toLocaleString()}</span> <span class="text-xs ${isOver ? 'text-rose-400' : 'text-slate-400'}">(${percentUsed}%)</span>`;
+    } else {
+      summaryEl.textContent = `₪${totalSpent.toLocaleString()}`;
+    }
+    if (labelEl) labelEl.textContent = 'סה"כ הוצאות:';
+  }
 }
 
 function renderExpensesTable(expenses) {
@@ -624,8 +661,8 @@ async function handleExpenseUpdate(e) {
     // Update local data
     const exp = currentExpenses.find(e => e.id === parseInt(expenseId));
     if (exp) Object.assign(exp, updates);
-    const total = currentExpenses.reduce((sum, e) => sum + e.amount, 0);
-    document.getElementById("expense-month-total").textContent = `₪${total.toLocaleString()}`;
+    // Re-apply filter to update summary with budget info
+    filterExpenses();
   } catch (error) {
     alert("שגיאה בעדכון הוצאה");
   }

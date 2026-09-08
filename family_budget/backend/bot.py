@@ -1197,6 +1197,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Persist to database
+    # For manual Telegram expenses, set charge_date to the 1st of next month
+    # since these are recorded before the credit card statement is generated
+    from datetime import date as date_type
+    from dateutil.relativedelta import relativedelta
+
+    today = date_type.today()
+    next_month = today + relativedelta(months=1)
+    charge_date = date_type(next_month.year, next_month.month, 1)
+
     with Session(engine) as session:
         expense = Expense(
             amount=amount,
@@ -1204,7 +1213,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             category_id=cat_id,
             payer=sender_name,
             is_fixed=False,
-            source="manual"
+            source="manual",
+            transaction_date=today,
+            charge_date=charge_date
         )
         session.add(expense)
         session.commit()

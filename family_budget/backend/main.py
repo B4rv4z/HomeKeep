@@ -104,8 +104,14 @@ async def get_expenses(
 
 @app.post("/api/expenses")
 async def create_expense(expense: ExpenseCreate, db: Session = Depends(get_session)):
-    """Create a new expense entry."""
+    """Create a new expense entry.
+
+    For manual expenses (source='manual'), the charge_date is set to the 1st of next month,
+    since manual expenses are typically recorded before the credit card statement is generated.
+    For file imports (source='file'), charge_date is set from the statement header.
+    """
     from datetime import date as date_type
+    from dateutil.relativedelta import relativedelta
 
     # Parse transaction_date if provided
     tx_date = None
@@ -115,6 +121,17 @@ async def create_expense(expense: ExpenseCreate, db: Session = Depends(get_sessi
         except ValueError:
             pass  # Keep as None if parsing fails
 
+    # For manual expenses, set charge_date to the 1st of next month
+    charge_date = None
+    if expense.source == "manual":
+        today = date_type.today()
+        # Set to 1st of next month
+        next_month = today + relativedelta(months=1)
+        charge_date = date_type(next_month.year, next_month.month, 1)
+        # If no transaction_date provided, use today
+        if tx_date is None:
+            tx_date = today
+
     new_expense = Expense(
         amount=expense.amount,
         description=expense.description,
@@ -122,7 +139,8 @@ async def create_expense(expense: ExpenseCreate, db: Session = Depends(get_sessi
         payer=expense.payer,
         is_fixed=expense.is_fixed,
         source=expense.source,
-        transaction_date=tx_date
+        transaction_date=tx_date,
+        charge_date=charge_date
     )
     db.add(new_expense)
     db.commit()
@@ -867,57 +885,44 @@ async def clear_activity_logs(db: Session = Depends(get_session)):
 @app.get("/api/analytics/date-range")
 async def get_available_date_range(db: Session = Depends(get_session)):
     """
-    Get the available date range based on actual expense data.
-    Returns months from the earliest expense to the end of the current year,
-    allowing for future growth.
+    Get the available date range for the month selector.
+    Returns months from 12 months before the earliest expense (or current month)
+    to 3 months after the current month, allowing backward navigation and future planning.
     """
     from datetime import datetime
     from dateutil.relativedelta import relativedelta
+
+    now = datetime.now()
 
     # Get all expenses and find earliest date
     all_expenses = db.exec(select(Expense)).all()
 
     if not all_expenses:
-        # No data - just return current month to end of year
-        now = datetime.now()
-        return {
-            "start_year": now.year,
-            "start_month": now.month,
-            "end_year": now.year,
-            "end_month": 12,
-            "months": [{
-                "value": f"{now.year}-{now.month}",
-                "label": now.strftime("%B %Y")
-            }]
-        }
+        # No data - return 12 months back to 3 months forward from current month
+        start = now - relativedelta(months=12)
+        end = now + relativedelta(months=3)
+    else:
+        # Find earliest expense date
+        earliest_date = None
+        for exp in all_expenses:
+            effective_date = get_expense_effective_date(exp)
+            if earliest_date is None or effective_date < earliest_date:
+                earliest_date = effective_date
 
-    # Find earliest and latest expense dates
-    earliest_date = None
-    latest_date = None
+        # Start from 12 months before earliest expense OR 12 months before now (whichever is earlier)
+        earliest_with_buffer = datetime(earliest_date.year, earliest_date.month, 1) - relativedelta(months=12)
+        now_with_buffer = now - relativedelta(months=12)
+        start = min(earliest_with_buffer, now_with_buffer)
 
-    for exp in all_expenses:
-        effective_date = get_expense_effective_date(exp)
-        if earliest_date is None or effective_date < earliest_date:
-            earliest_date = effective_date
-        if latest_date is None or effective_date > latest_date:
-            latest_date = effective_date
-
-    now = datetime.now()
-
-    # Start from earliest expense month
-    start_year = earliest_date.year
-    start_month = earliest_date.month
-
-    # End at December of current year (or latest expense year if it's in the future)
-    end_year = max(now.year, latest_date.year)
-    end_month = 12
+        # End at 3 months after current month
+        end = now + relativedelta(months=3)
 
     # Generate list of months from start to end
     months = []
-    current = datetime(start_year, start_month, 1)
-    end = datetime(end_year, end_month, 1)
+    current = datetime(start.year, start.month, 1)
+    end_date = datetime(end.year, end.month, 1)
 
-    while current <= end:
+    while current <= end_date:
         months.append({
             "value": f"{current.year}-{current.month}",
             "label": current.strftime("%B %Y")
@@ -925,9 +930,10 @@ async def get_available_date_range(db: Session = Depends(get_session)):
         current += relativedelta(months=1)
 
     return {
-        "start_year": start_year,
-        "start_month": start_month,
-        "end_year": end_year,
-        "end_month": end_month,
+        "start_year": start.year,
+        "start_month": start.month,
+        "end_year": end.year,
+        "end_month": end.month,
+        "current_month": f"{now.year}-{now.month}",
         "months": months
     }
