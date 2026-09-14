@@ -29,7 +29,7 @@ RUN chmod +x ./run.sh
 # Create data directory
 RUN mkdir -p /data
 
-EXPOSE 8000
+EXPOSE 8888
 
 VOLUME ["/data"]
 

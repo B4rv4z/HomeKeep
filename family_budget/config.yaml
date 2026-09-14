@@ -9,9 +9,9 @@ arch:
   - amd64
   - armv7
 ports:
-  8000/tcp: 8000
+  8888/tcp: 8888
 ports_description:
-  8000/tcp: "Web Dashboard Interface"
+  8888/tcp: "Web Dashboard Interface"
 map:
   - data:rw
 options:
