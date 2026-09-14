@@ -3,13 +3,13 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import List, Optional
 
-from fastapi import FastAPI, Depends, Query
+from fastapi import FastAPI, Depends, Query, UploadFile, File
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from backend.database import init_db, get_session, Expense, Income, Investment, Category, Member, RecurringExpense, KeywordMapping, ActivityLog
+from backend.database import init_db, get_session, Expense, Income, Investment, Category, Member, RecurringExpense, KeywordMapping, ActivityLog, PortfolioHolding
 from backend.bot import run_bot_in_thread
 from backend.analytics import calculate_monthly_analytics, get_recent_expenses, calculate_advanced_analytics
 from backend.parser import learn_category_from_correction, get_category_by_keywords
@@ -41,13 +41,6 @@ class IncomeCreate(BaseModel):
     notes: Optional[str] = None
 
 
-class InvestmentCreate(BaseModel):
-    target_name: str
-    amount: float
-    transaction_date: str  # ISO format: YYYY-MM-DD
-    notes: Optional[str] = None
-
-
 class CategoryCreate(BaseModel):
     name: str
     type: str = "variable"
@@ -74,7 +67,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Family Budget Tracker",
     description="Local-first family finance management with Telegram bot",
-    version="1.8.2",
+    version="1.9.0",
     lifespan=lifespan
 )
 
@@ -314,47 +307,6 @@ async def delete_income(income_id: int, db: Session = Depends(get_session)):
     db.delete(income)
     db.commit()
     return {"status": "deleted", "id": income_id}
-
-
-# ============ Investment Endpoints ============
-
-@app.get("/api/investments")
-async def get_investments(db: Session = Depends(get_session)):
-    """Get all investment records."""
-    investments = db.exec(
-        select(Investment).order_by(Investment.transaction_date.desc())
-    ).all()
-    return investments
-
-
-@app.post("/api/investments")
-async def create_investment(
-    investment: InvestmentCreate,
-    db: Session = Depends(get_session)
-):
-    """Create a new investment entry."""
-    from datetime import date
-    new_investment = Investment(
-        target_name=investment.target_name,
-        amount=investment.amount,
-        transaction_date=date.fromisoformat(investment.transaction_date),
-        notes=investment.notes
-    )
-    db.add(new_investment)
-    db.commit()
-    db.refresh(new_investment)
-    return new_investment
-
-
-@app.delete("/api/investments/{investment_id}")
-async def delete_investment(investment_id: int, db: Session = Depends(get_session)):
-    """Delete an investment record by ID."""
-    investment = db.get(Investment, investment_id)
-    if not investment:
-        return {"error": "Investment not found"}
-    db.delete(investment)
-    db.commit()
-    return {"status": "deleted", "id": investment_id}
 
 
 # ============ Category Endpoints ============
@@ -937,3 +889,218 @@ async def get_available_date_range(db: Session = Depends(get_session)):
         "current_month": f"{now.year}-{now.month}",
         "months": months
     }
+
+
+# ============ Portfolio Endpoints ============
+
+@app.get("/api/portfolio")
+async def get_portfolio(db: Session = Depends(get_session)):
+    """Get all portfolio holdings with current values."""
+    holdings = db.exec(
+        select(PortfolioHolding).order_by(PortfolioHolding.value_ils.desc())
+    ).all()
+
+    return [{
+        "id": h.id,
+        "symbol": h.symbol,
+        "name": h.name,
+        "quantity": h.quantity,
+        "cost_basis": h.cost_basis,
+        "currency": h.currency,
+        "last_price": h.last_price,
+        "last_price_updated": h.last_price_updated.isoformat() if h.last_price_updated else None,
+        "value_ils": h.value_ils,
+        "daily_change_pct": h.daily_change_pct,
+        "total_change_pct": h.total_change_pct,
+        "import_date": h.import_date.isoformat() if h.import_date else None,
+        "notes": h.notes
+    } for h in holdings]
+
+
+@app.get("/api/portfolio/summary")
+async def get_portfolio_summary(db: Session = Depends(get_session)):
+    """Get portfolio summary for dashboard display."""
+    holdings = db.exec(select(PortfolioHolding)).all()
+
+    if not holdings:
+        return {
+            "total_value_ils": 0,
+            "total_cost_ils": 0,
+            "total_change_ils": 0,
+            "total_change_pct": 0,
+            "holdings_count": 0,
+            "last_updated": None
+        }
+
+    total_value = sum(h.value_ils or 0 for h in holdings)
+
+    # Calculate total cost (cost_basis * quantity * exchange_rate)
+    # For simplicity, we use the imported value_ils as the "current" value
+    # and estimate cost from cost_basis
+    total_cost = 0
+    for h in holdings:
+        if h.cost_basis and h.quantity and h.last_price:
+            # Approximate: cost in ILS = (cost_basis / last_price) * value_ils
+            if h.last_price > 0:
+                cost_ratio = h.cost_basis / h.last_price
+                total_cost += (h.value_ils or 0) * cost_ratio
+        elif h.cost_basis and h.quantity:
+            # Fallback: assume similar exchange rate
+            total_cost += h.cost_basis * h.quantity * 3.65  # Approximate USD/ILS
+
+    total_change = total_value - total_cost
+    total_change_pct = (total_change / total_cost * 100) if total_cost > 0 else 0
+
+    # Get latest update time
+    last_updated = None
+    for h in holdings:
+        if h.last_price_updated:
+            if last_updated is None or h.last_price_updated > last_updated:
+                last_updated = h.last_price_updated
+
+    return {
+        "total_value_ils": total_value,
+        "total_cost_ils": total_cost,
+        "total_change_ils": total_change,
+        "total_change_pct": total_change_pct,
+        "holdings_count": len(holdings),
+        "last_updated": last_updated.isoformat() if last_updated else None
+    }
+
+
+@app.post("/api/portfolio/import")
+async def import_portfolio(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_session)
+):
+    """
+    Import portfolio from bank Excel export.
+    This REPLACES all existing holdings.
+    """
+    from datetime import date as date_type
+    from backend.portfolio_parser import parse_portfolio_xlsx
+
+    # Read file
+    file_bytes = await file.read()
+
+    # Parse portfolio
+    result = parse_portfolio_xlsx(file_bytes)
+
+    if result.get("error"):
+        return {"error": result["error"], "holdings_imported": 0}
+
+    holdings_data = result.get("holdings", [])
+    summary = result.get("summary", {})
+
+    if not holdings_data:
+        return {"error": "No holdings found in file", "holdings_imported": 0}
+
+    # Delete all existing holdings
+    existing = db.exec(select(PortfolioHolding)).all()
+    for h in existing:
+        db.delete(h)
+    db.commit()
+
+    # Import new holdings
+    import_date = date_type.today()
+    for h in holdings_data:
+        holding = PortfolioHolding(
+            symbol=h["symbol"],
+            name=h["name"],
+            quantity=h["quantity"],
+            cost_basis=h["cost_basis"],
+            currency=h.get("currency", "USD"),
+            last_price=h["price"],
+            last_price_updated=datetime.now(),
+            value_ils=h["value_ils"],
+            daily_change_pct=h.get("daily_change_pct"),
+            total_change_pct=h.get("total_change_pct"),
+            import_date=import_date
+        )
+        db.add(holding)
+
+    db.commit()
+
+    # Log activity
+    log_activity(
+        db,
+        action="portfolio_import",
+        source="dashboard",
+        details=f"Imported {len(holdings_data)} holdings",
+        record_count=len(holdings_data),
+        total_amount=summary.get("total_value_ils", 0)
+    )
+
+    return {
+        "holdings_imported": len(holdings_data),
+        "total_value_ils": summary.get("total_value_ils", 0),
+        "total_change_pct": summary.get("total_change_pct", 0),
+        "export_date": summary.get("export_date")
+    }
+
+
+@app.post("/api/portfolio/refresh-quotes")
+async def refresh_portfolio_quotes(db: Session = Depends(get_session)):
+    """Fetch latest prices for all holdings from Yahoo Finance.
+
+    Updates each holding's price and recalculates value_ils using current exchange rate.
+    Formula: value_ils = quantity × price × usd_ils_rate
+    """
+    from backend.quotes import fetch_quotes, get_usd_ils_rate
+
+    holdings = db.exec(select(PortfolioHolding)).all()
+
+    if not holdings:
+        return {"updated": 0, "message": "No holdings to update"}
+
+    # Get unique symbols
+    symbols = list(set(h.symbol for h in holdings))
+
+    # Fetch quotes and exchange rate
+    quotes = await fetch_quotes(symbols)
+    usd_ils = await get_usd_ils_rate()
+
+    # Update holdings with new prices and ILS values
+    updated_count = 0
+    total_value_ils = 0
+
+    for h in holdings:
+        if h.symbol in quotes:
+            quote = quotes[h.symbol]
+            h.last_price = quote["price"]
+            h.last_price_updated = datetime.now()
+
+            # Calculate value in ILS: quantity × price × exchange rate
+            # Currency may be stored as "USD", "$", or "US$"
+            if h.currency in ("USD", "$", "US$"):
+                h.value_ils = h.quantity * quote["price"] * usd_ils
+            else:
+                # For ILS-denominated holdings
+                h.value_ils = h.quantity * quote["price"]
+
+            total_value_ils += h.value_ils
+            db.add(h)
+            updated_count += 1
+        elif h.value_ils:
+            # For holdings without quotes, keep existing value
+            total_value_ils += h.value_ils
+
+    db.commit()
+
+    return {
+        "updated": updated_count,
+        "total_symbols": len(symbols),
+        "usd_ils_rate": usd_ils,
+        "total_value_ils": total_value_ils
+    }
+
+
+@app.delete("/api/portfolio/clear")
+async def clear_portfolio(db: Session = Depends(get_session)):
+    """Delete all portfolio holdings."""
+    holdings = db.exec(select(PortfolioHolding)).all()
+    count = len(holdings)
+    for h in holdings:
+        db.delete(h)
+    db.commit()
+    return {"status": "cleared", "count": count}

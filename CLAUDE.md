@@ -95,14 +95,25 @@ family_budget/
 | received_date | date | Date received |
 | notes | str | Optional notes |
 
-#### `investments`
+#### `investments` (DEPRECATED)
+Replaced by `portfolio_holdings`. Kept for migration compatibility only.
+
+#### `portfolio_holdings`
 | Column | Type | Description |
 |--------|------|-------------|
 | id | int | Primary key |
-| target_name | str | Investment target name |
-| amount | float | Amount invested |
-| transaction_date | date | Investment date |
+| symbol | str | Stock/ETF symbol (e.g., "GOOGL") |
+| name | str | Security name |
+| quantity | float | Number of shares |
+| cost_basis | float | Average cost per share |
+| currency | str | Currency (default: "USD") |
+| last_price | float | Last fetched price |
+| last_price_updated | datetime | When price was last fetched |
+| value_ils | float | Current value in ILS |
+| import_date | date | When this holding was imported |
 | notes | str | Optional notes |
+
+**Import behavior:** Each portfolio import REPLACES all existing holdings (full snapshot replacement).
 
 #### `recurring_expenses`
 | Column | Type | Description |
@@ -473,6 +484,7 @@ python -m uvicorn backend.main:app --reload --port 8000
 
 ## Version History
 
+- **v1.9.0:** Portfolio holdings feature - import from bank Excel, live Yahoo Finance quotes, dashboard display
 - **v1.6.2:** Add activity logging for Telegram operations
 - **v1.6.1:** Fix multi-sheet XLSX parsing for foreign currency
 - **v1.6.0:** Add charge_date + installment payment tracking

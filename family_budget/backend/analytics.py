@@ -1,7 +1,7 @@
 from datetime import datetime, date
 from typing import Dict, Any, List
 from sqlmodel import Session, select
-from backend.database import engine, Expense, Income, Investment, Category, RecurringExpense
+from backend.database import engine, Expense, Income, Investment, Category, RecurringExpense, PortfolioHolding
 
 
 def get_expense_effective_date(exp: Expense) -> date:
@@ -63,13 +63,14 @@ def calculate_monthly_analytics(year: int, month: int) -> Dict[str, Any]:
         total_extra = sum(inc.amount for inc in month_incomes if inc.income_type == "extra")
         total_income = total_salary + total_bonus + total_extra
 
-        # 2. Total Investments for target month
-        all_investments = session.exec(select(Investment)).all()
-        month_investments = [
-            inv for inv in all_investments
-            if inv.transaction_date.year == year and inv.transaction_date.month == month
-        ]
-        total_invested = sum(inv.amount for inv in month_investments)
+        # 2. Portfolio total value (not monthly - this is current snapshot)
+        # We use portfolio_holdings instead of old investments table
+        portfolio_holdings = session.exec(select(PortfolioHolding)).all()
+        portfolio_total = sum(h.value_ils or 0 for h in portfolio_holdings)
+
+        # For backwards compatibility, keep total_invested as 0 for monthly calculations
+        # The portfolio value is a snapshot, not a monthly flow
+        total_invested = 0
 
         # 3. Total Expenses per Category for target month
         # Uses transaction_date if available, otherwise created_at
@@ -156,6 +157,7 @@ def calculate_monthly_analytics(year: int, month: int) -> Dict[str, Any]:
                 "extra": round(total_extra, 2),
                 "spent": round(total_spent, 2),
                 "invested": round(total_invested, 2),
+                "portfolio_total": round(portfolio_total, 2),  # Current portfolio value
                 "net_balance": round(net_balance, 2),
                 "savings_rate_pct": round(savings_rate, 1)
             },

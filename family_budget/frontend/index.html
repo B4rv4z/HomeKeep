@@ -62,8 +62,9 @@
           <div id="stat-spent" class="text-xl font-bold text-rose-400 mt-1">₪0</div>
         </div>
         <div class="bg-slate-800/80 p-4 rounded-xl border border-slate-700">
-          <div class="text-xs text-slate-400">הפקדות להשקעה</div>
-          <div id="stat-invested" class="text-xl font-bold text-sky-400 mt-1">₪0</div>
+          <div class="text-xs text-slate-400">שווי תיק השקעות</div>
+          <div id="stat-portfolio" class="text-xl font-bold text-sky-400 mt-1">₪0</div>
+          <div id="stat-portfolio-change" class="text-xs text-slate-400 mt-0.5"></div>
         </div>
         <div class="bg-slate-800/80 p-4 rounded-xl border border-slate-700">
           <div class="text-xs text-slate-400">שיעור חיסכון והשקעה</div>
@@ -117,18 +118,23 @@
             </button>
           </form>
         </div>
-        <!-- Investment Form -->
+        <!-- Portfolio Section -->
         <div class="bg-slate-800/40 p-4 rounded-xl border border-slate-700">
-          <h3 class="text-xs font-bold text-slate-300 mb-3">הזנת הפקדה להשקעה</h3>
-          <form id="investment-form" class="space-y-2.5 text-xs">
-            <input id="inv-amount" type="number" step="0.01" placeholder="סכום הפקדה (₪)" required
-                   class="w-full bg-slate-900 border border-slate-700 p-2 rounded text-slate-100 focus:border-sky-500 focus:outline-none" />
-            <input id="inv-target" type="text" placeholder="אפיק השקעה" required
-                   class="w-full bg-slate-900 border border-slate-700 p-2 rounded text-slate-100 focus:border-sky-500 focus:outline-none" />
-            <button type="submit" class="w-full bg-sky-600 hover:bg-sky-500 font-semibold p-2 rounded text-white transition">
-              הוסף הפקדה
-            </button>
-          </form>
+          <div class="flex justify-between items-center mb-3">
+            <h3 class="text-xs font-bold text-slate-300">תיק השקעות</h3>
+            <div class="flex gap-2">
+              <button onclick="refreshPortfolioQuotes()" class="text-xs bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded">
+                🔄 רענן מחירים
+              </button>
+              <label class="text-xs bg-sky-600 hover:bg-sky-500 px-2 py-1 rounded cursor-pointer">
+                📤 ייבא תיק
+                <input type="file" id="portfolio-file-input" accept=".xlsx,.xls" class="hidden" onchange="importPortfolio(this)" />
+              </label>
+            </div>
+          </div>
+          <div id="portfolio-holdings" class="space-y-2 text-xs max-h-48 overflow-y-auto">
+            <div class="text-slate-400 text-center py-4">אין אחזקות בתיק</div>
+          </div>
         </div>
       </div>
 

@@ -1239,6 +1239,160 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(reply, parse_mode="Markdown")
 
 
+# ============ Portfolio Import Handlers ============
+
+async def portfolio_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /portfolio command - instructions for portfolio upload."""
+    if not update.message:
+        return
+
+    user = update.effective_user
+    chat_id = update.effective_chat.id
+
+    if not is_authorized(user.id, chat_id):
+        return
+
+    await update.message.reply_text(
+        "*Portfolio Import*\n\n"
+        "Reply to this message with your portfolio Excel file.\n"
+        "This will *replace* all existing holdings.\n\n"
+        "Supported format: Bank portfolio export (תיק ני\"ע)",
+        parse_mode="Markdown"
+    )
+
+
+async def handle_portfolio_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Handle portfolio file uploaded as reply to /portfolio command.
+    Separate from CC statement flow - only triggers on explicit reply.
+    """
+    if not update.message or not update.message.document:
+        return
+
+    # Check if this is a reply to a /portfolio message
+    if not update.message.reply_to_message:
+        return
+
+    reply_text = update.message.reply_to_message.text or ""
+    if "Portfolio Import" not in reply_text:
+        return
+
+    user = update.effective_user
+    chat_id = update.effective_chat.id
+
+    if not is_authorized(user.id, chat_id):
+        return
+
+    document = update.message.document
+    file_name = document.file_name or "unknown"
+    file_size = document.file_size or 0
+
+    # Limit file size (1MB max)
+    if file_size > 1024 * 1024:
+        await update.message.reply_text("File too large. Maximum size is 1MB.")
+        return
+
+    # Check file type - only XLSX for portfolio
+    if not file_name.lower().endswith(('.xlsx', '.xls')):
+        await update.message.reply_text(
+            "Please upload an Excel file (.xlsx)\n"
+            "Only bank portfolio exports are supported."
+        )
+        return
+
+    await update.message.reply_text(f"Processing portfolio file: {file_name}...")
+
+    try:
+        # Download file
+        file = await document.get_file()
+        file_bytes = await file.download_as_bytearray()
+
+        # Parse portfolio
+        from backend.portfolio_parser import parse_portfolio_xlsx
+        result = parse_portfolio_xlsx(bytes(file_bytes))
+
+        if result.get("error"):
+            await update.message.reply_text(f"Error parsing portfolio: {result['error']}")
+            return
+
+        holdings_data = result.get("holdings", [])
+        summary = result.get("summary", {})
+
+        if not holdings_data:
+            await update.message.reply_text("No holdings found in the file.")
+            return
+
+        # Save to database (replace existing)
+        from backend.database import engine, PortfolioHolding
+        from datetime import date as date_type, datetime
+
+        with Session(engine) as session:
+            # Delete existing holdings
+            from sqlmodel import select
+            existing = session.exec(select(PortfolioHolding)).all()
+            for h in existing:
+                session.delete(h)
+            session.commit()
+
+            # Import new holdings
+            import_date = date_type.today()
+            for h in holdings_data:
+                holding = PortfolioHolding(
+                    symbol=h["symbol"],
+                    name=h["name"],
+                    quantity=h["quantity"],
+                    cost_basis=h["cost_basis"],
+                    currency=h.get("currency", "USD"),
+                    last_price=h["price"],
+                    last_price_updated=datetime.now(),
+                    value_ils=h["value_ils"],
+                    daily_change_pct=h.get("daily_change_pct"),
+                    total_change_pct=h.get("total_change_pct"),
+                    import_date=import_date
+                )
+                session.add(holding)
+
+            session.commit()
+
+        # Log activity
+        log_activity(
+            action="portfolio_import",
+            source="telegram",
+            details=f"Imported by {user.first_name or 'User'}",
+            record_count=len(holdings_data),
+            total_amount=summary.get("total_value_ils", 0)
+        )
+
+        # Build response
+        total_value = summary.get("total_value_ils", 0)
+        total_change_pct = summary.get("total_change_pct", 0)
+
+        # Holdings summary (top 5 by value)
+        holdings_sorted = sorted(holdings_data, key=lambda x: x.get("value_ils", 0), reverse=True)
+        holdings_text = "\n".join([
+            f"• {h['symbol']}: ₪{h['value_ils']:,.0f}"
+            for h in holdings_sorted[:5]
+        ])
+        if len(holdings_sorted) > 5:
+            holdings_text += f"\n• ... and {len(holdings_sorted) - 5} more"
+
+        change_emoji = "📈" if total_change_pct >= 0 else "📉"
+
+        reply = (
+            f"*Portfolio Import Complete* {change_emoji}\n\n"
+            f"Holdings: {len(holdings_data)}\n"
+            f"Total Value: ₪{total_value:,.0f}\n"
+            f"Total Return: {total_change_pct:+.1f}%\n\n"
+            f"*Top Holdings:*\n{holdings_text}"
+        )
+
+        await update.message.reply_text(reply, parse_mode="Markdown")
+
+    except Exception as e:
+        logger.error(f"Portfolio import error: {e}")
+        await update.message.reply_text(f"Error importing portfolio: {str(e)}")
+
+
 async def run_bot_async():
     """Run the Telegram bot with proper async handling."""
     if not TELEGRAM_BOT_TOKEN:
@@ -1251,7 +1405,10 @@ async def run_bot_async():
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("bulk", bulk_command))
+    application.add_handler(CommandHandler("portfolio", portfolio_command))
     application.add_handler(CallbackQueryHandler(handle_import_callback, pattern="^import_"))
+    # Portfolio reply handler (must be before general document handler)
+    application.add_handler(MessageHandler(filters.Document.ALL & filters.REPLY, handle_portfolio_reply))
     application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 

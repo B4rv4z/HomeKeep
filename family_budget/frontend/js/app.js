@@ -159,12 +159,17 @@ async function fetchDashboard() {
     const data = await apiGet(url);
     document.getElementById("stat-income").textContent = `₪${data.totals.income.toLocaleString()}`;
     document.getElementById("stat-spent").textContent = `₪${data.totals.spent.toLocaleString()}`;
-    document.getElementById("stat-invested").textContent = `₪${data.totals.invested.toLocaleString()}`;
     document.getElementById("stat-savings-rate").textContent = `${data.totals.savings_rate_pct}%`;
+
+    // Portfolio total comes from portfolio_total field (current snapshot)
+    const portfolioTotal = data.totals.portfolio_total || 0;
+    document.getElementById("stat-portfolio").textContent = `₪${portfolioTotal.toLocaleString()}`;
+
     renderInsights(data.alerts, data.insights);
     renderCategoryProgress(data.category_breakdown);
     renderChart(data.category_breakdown);
     await fetchRecentExpenses();
+    await fetchPortfolioSummary();
   } catch (error) {
     console.error("Dashboard fetch error:", error);
   }
@@ -351,25 +356,6 @@ function setupFormHandlers() {
       await fetchDashboard();
     } catch (error) {
       alert("שגיאה בהוספת הכנסה");
-    } finally {
-      form.classList.remove("loading");
-    }
-  });
-
-  document.getElementById("investment-form").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const form = e.target;
-    form.classList.add("loading");
-    try {
-      await apiPost("/api/investments", {
-        amount: parseFloat(document.getElementById("inv-amount").value),
-        target_name: document.getElementById("inv-target").value,
-        transaction_date: new Date().toISOString().split("T")[0]
-      });
-      form.reset();
-      await fetchDashboard();
-    } catch (error) {
-      alert("שגיאה בהוספת הפקדה");
     } finally {
       form.classList.remove("loading");
     }
@@ -1238,6 +1224,129 @@ async function clearActivityLogs() {
     await loadLogsTab();
   } catch (error) {
     alert("שגיאה במחיקת הלוג");
+  }
+}
+
+// ============ Portfolio Functions ============
+
+async function fetchPortfolioSummary() {
+  try {
+    const summary = await apiGet("/api/portfolio/summary");
+    const portfolio = await apiGet("/api/portfolio");
+
+    // Update stat card with change info
+    const changeEl = document.getElementById("stat-portfolio-change");
+    if (summary.total_change_pct !== 0) {
+      const isPositive = summary.total_change_pct >= 0;
+      changeEl.className = `text-xs mt-0.5 ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`;
+      changeEl.textContent = `${isPositive ? '+' : ''}${summary.total_change_pct.toFixed(1)}%`;
+    } else {
+      changeEl.textContent = '';
+    }
+
+    // Update holdings list
+    const container = document.getElementById("portfolio-holdings");
+    if (portfolio.length === 0) {
+      container.innerHTML = '<div class="text-slate-400 text-center py-4">אין אחזקות בתיק</div>';
+      return;
+    }
+
+    // Header row
+    const headerHtml = `
+      <div class="flex justify-between items-center py-1 border-b border-slate-600 text-slate-400 text-[10px]">
+        <div class="flex items-center gap-2 flex-1">
+          <span class="w-14">סימבול</span>
+          <span>שם</span>
+        </div>
+        <div class="flex items-center gap-3 text-left">
+          <span class="w-12 text-left">יומי</span>
+          <span class="w-12 text-left">מצטבר</span>
+          <span class="w-20 text-left">שווי</span>
+        </div>
+      </div>
+    `;
+
+    container.innerHTML = headerHtml + portfolio.map(h => {
+      const dailyChange = h.daily_change_pct || 0;
+      const totalChange = h.total_change_pct || 0;
+      const dailyColor = dailyChange >= 0 ? 'text-emerald-400' : 'text-rose-400';
+      const totalColor = totalChange >= 0 ? 'text-emerald-400' : 'text-rose-400';
+      const dailySign = dailyChange >= 0 ? '+' : '';
+      const totalSign = totalChange >= 0 ? '+' : '';
+
+      return `
+        <div class="flex justify-between items-center py-1.5 border-b border-slate-700/50">
+          <div class="flex items-center gap-2 flex-1">
+            <span class="font-medium text-slate-200 w-14">${h.symbol}</span>
+            <span class="text-slate-500 truncate max-w-[100px]">${h.name}</span>
+          </div>
+          <div class="flex items-center gap-3 text-left">
+            <span class="${dailyColor} w-12 text-left">${dailySign}${dailyChange.toFixed(1)}%</span>
+            <span class="${totalColor} w-12 text-left">${totalSign}${totalChange.toFixed(1)}%</span>
+            <span class="text-sky-400 font-medium w-20 text-left">₪${(h.value_ils || 0).toLocaleString()}</span>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+  } catch (error) {
+    console.error("Portfolio fetch error:", error);
+  }
+}
+
+async function refreshPortfolioQuotes() {
+  try {
+    const btn = event.target;
+    btn.disabled = true;
+    btn.textContent = "מרענן...";
+
+    const result = await apiPost("/api/portfolio/refresh-quotes", {});
+
+    btn.textContent = "🔄 רענן מחירים";
+    btn.disabled = false;
+
+    if (result.updated > 0) {
+      await fetchDashboard();
+      alert(`עודכנו ${result.updated} נכסים\nשער דולר: ₪${result.usd_ils_rate.toFixed(2)}`);
+    } else {
+      alert("לא נמצאו נכסים לעדכון");
+    }
+  } catch (error) {
+    console.error("Quote refresh error:", error);
+    alert("שגיאה בעדכון מחירים");
+  }
+}
+
+async function importPortfolio(input) {
+  if (!input.files || !input.files[0]) return;
+
+  const file = input.files[0];
+  const formData = new FormData();
+  formData.append("file", file);
+
+  try {
+    const res = await fetch("/api/portfolio/import", {
+      method: "POST",
+      body: formData
+    });
+
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+    const result = await res.json();
+
+    if (result.error) {
+      alert(`שגיאה: ${result.error}`);
+      return;
+    }
+
+    alert(`יובאו ${result.holdings_imported} אחזקות\nשווי תיק: ₪${result.total_value_ils.toLocaleString()}`);
+    await fetchDashboard();
+
+  } catch (error) {
+    console.error("Portfolio import error:", error);
+    alert("שגיאה בייבוא התיק");
+  } finally {
+    input.value = ""; // Reset file input
   }
 }
 

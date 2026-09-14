@@ -60,11 +60,30 @@ class Income(SQLModel, table=True):
 
 
 class Investment(SQLModel, table=True):
+    """DEPRECATED - Use PortfolioHolding instead. Kept for migration compatibility."""
     __tablename__ = "investments"
     id: Optional[int] = Field(default=None, primary_key=True)
     target_name: str = Field(index=True)
     amount: float
     transaction_date: date = Field(default_factory=date.today)
+    notes: Optional[str] = None
+
+
+class PortfolioHolding(SQLModel, table=True):
+    """Portfolio holdings imported from bank export."""
+    __tablename__ = "portfolio_holdings"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    symbol: str = Field(index=True)              # e.g., "GOOGL"
+    name: str                                     # e.g., "ALPHABET INC-CL A"
+    quantity: float                               # Number of shares
+    cost_basis: float                             # Average cost per share (from import)
+    currency: str = Field(default="USD")          # USD, ILS, etc.
+    last_price: Optional[float] = None            # Last fetched price
+    last_price_updated: Optional[datetime] = None # When price was last fetched
+    value_ils: Optional[float] = None             # Current value in ILS (from import)
+    daily_change_pct: Optional[float] = None      # Daily change percentage
+    total_change_pct: Optional[float] = None      # Total change from cost basis
+    import_date: date = Field(default_factory=date.today)  # When this holding was imported
     notes: Optional[str] = None
 
 
@@ -137,6 +156,24 @@ def migrate_db():
         except Exception as e:
             # Table might not exist yet, which is fine
             print(f"Migration check skipped: {e}")
+
+        # Migrate portfolio_holdings table
+        try:
+            result = conn.execute(text("PRAGMA table_info(portfolio_holdings)"))
+            columns = [row[1] for row in result.fetchall()]
+
+            if columns:  # Table exists
+                if 'daily_change_pct' not in columns:
+                    conn.execute(text("ALTER TABLE portfolio_holdings ADD COLUMN daily_change_pct FLOAT"))
+                    conn.commit()
+                    print("Migration: Added daily_change_pct column to portfolio_holdings table")
+
+                if 'total_change_pct' not in columns:
+                    conn.execute(text("ALTER TABLE portfolio_holdings ADD COLUMN total_change_pct FLOAT"))
+                    conn.commit()
+                    print("Migration: Added total_change_pct column to portfolio_holdings table")
+        except Exception as e:
+            print(f"Portfolio migration check skipped: {e}")
 
 
 def init_db():
