@@ -8,16 +8,27 @@ let categories = [];
 let currentExpenses = [];
 let selectedMonth = null; // Single global month for all tabs
 
+// ============ Base Path for HA Ingress ============
+// When running under HA Ingress, the <base> tag is injected by the backend
+// This helper ensures API calls work correctly in both direct and ingress modes
+function getApiUrl(endpoint) {
+  // Remove leading slash to make it relative (works with <base> tag)
+  if (endpoint.startsWith('/')) {
+    return endpoint.substring(1);
+  }
+  return endpoint;
+}
+
 // ============ API Helpers ============
 
 async function apiGet(endpoint) {
-  const res = await fetch(endpoint);
+  const res = await fetch(getApiUrl(endpoint));
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }
 
 async function apiPost(endpoint, data) {
-  const res = await fetch(endpoint, {
+  const res = await fetch(getApiUrl(endpoint), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data)
@@ -27,7 +38,7 @@ async function apiPost(endpoint, data) {
 }
 
 async function apiPut(endpoint, data) {
-  const res = await fetch(endpoint, {
+  const res = await fetch(getApiUrl(endpoint), {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data)
@@ -37,7 +48,7 @@ async function apiPut(endpoint, data) {
 }
 
 async function apiPatch(endpoint, data) {
-  const res = await fetch(endpoint, {
+  const res = await fetch(getApiUrl(endpoint), {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data)
@@ -47,7 +58,7 @@ async function apiPatch(endpoint, data) {
 }
 
 async function apiDelete(endpoint) {
-  const res = await fetch(endpoint, { method: "DELETE" });
+  const res = await fetch(getApiUrl(endpoint), { method: "DELETE" });
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }
@@ -1325,7 +1336,7 @@ async function importPortfolio(input) {
   formData.append("file", file);
 
   try {
-    const res = await fetch("/api/portfolio/import", {
+    const res = await fetch(getApiUrl("/api/portfolio/import"), {
       method: "POST",
       body: formData
     });

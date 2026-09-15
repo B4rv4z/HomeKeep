@@ -3,9 +3,9 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import List, Optional
 
-from fastapi import FastAPI, Depends, Query, UploadFile, File
+from fastapi import FastAPI, Depends, Query, UploadFile, File, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -67,7 +67,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Family Budget Tracker",
     description="Local-first family finance management with Telegram bot",
-    version="1.9.2",
+    version="1.9.3",
     lifespan=lifespan
 )
 
@@ -76,9 +76,22 @@ app.mount("/static", StaticFiles(directory="frontend"), name="static")
 
 
 @app.get("/")
-async def serve_dashboard():
-    """Serve the main dashboard HTML."""
-    return FileResponse("frontend/index.html")
+async def serve_dashboard(request: Request):
+    """Serve the main dashboard HTML with proper base path for HA Ingress."""
+    # Read the HTML file
+    with open("frontend/index.html", "r", encoding="utf-8") as f:
+        html_content = f.read()
+
+    # Check if we're behind HA Ingress by looking for the X-Ingress-Path header
+    ingress_path = request.headers.get("X-Ingress-Path", "")
+
+    if ingress_path:
+        # Inject base tag for ingress path (ensure trailing slash)
+        base_path = ingress_path if ingress_path.endswith("/") else ingress_path + "/"
+        base_tag = f'<base href="{base_path}">'
+        html_content = html_content.replace("<head>", f"<head>\n  {base_tag}", 1)
+
+    return HTMLResponse(content=html_content)
 
 
 # ============ Expense Endpoints ============

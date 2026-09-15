@@ -1,6 +1,6 @@
 # Family Budget Tracker - Technical Documentation
 
-**Version:** 1.6.2
+**Version:** 1.9.2
 **Purpose:** Zero-leakage local family finance manager with Telegram bot and SQLite
 **Target Platform:** Home Assistant Add-on
 
@@ -406,6 +406,14 @@ options:
   openai_api_key: ""          # Required for smart parsing
 ```
 
+### Home Assistant Ingress
+
+The add-on supports HA Ingress for secure remote access:
+- **Panel icon:** `mdi:wallet` (appears in HA sidebar as "Budget")
+- **No exposed ports:** Dashboard only accessible through HA authentication
+- **Remote access:** Works with Nabu Casa or any HA remote access method
+- **Base path handling:** Backend injects `<base>` tag when `X-Ingress-Path` header detected
+
 Environment variables:
 - `TELEGRAM_BOT_TOKEN`
 - `ALLOWED_USER_IDS`
@@ -484,6 +492,9 @@ python -m uvicorn backend.main:app --reload --port 8000
 
 ## Version History
 
+- **v1.9.3:** Add Home Assistant Ingress support for secure remote access via HA dashboard
+- **v1.9.2:** Add python-multipart dependency for file uploads
+- **v1.9.1:** Revert port back to 8000
 - **v1.9.0:** Portfolio holdings feature - import from bank Excel, live Yahoo Finance quotes, dashboard display
 - **v1.6.2:** Add activity logging for Telegram operations
 - **v1.6.1:** Fix multi-sheet XLSX parsing for foreign currency
