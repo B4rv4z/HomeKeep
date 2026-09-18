@@ -67,7 +67,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Family Budget Tracker",
     description="Local-first family finance management with Telegram bot",
-    version="1.9.3",
+    version="1.9.4",
     lifespan=lifespan
 )
 

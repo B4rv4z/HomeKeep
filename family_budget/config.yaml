@@ -1,7 +1,7 @@
 name: "Family Budget Tracker"
 slug: "family_budget"
 description: "Zero-leakage local family finance manager with Telegram bot and SQLite"
-version: "1.9.3"
+version: "1.9.4"
 startup: "application"
 boot: "auto"
 arch:
@@ -14,7 +14,7 @@ ingress_stream: true
 panel_icon: "mdi:wallet"
 panel_title: "Budget"
 ports:
-  8000/tcp: null
+  8000/tcp: 8000
 ports_description:
   8000/tcp: "Web Dashboard Interface (via Ingress)"
 map:
